@@ -1,28 +1,47 @@
-use crate::Protocol;
+pub trait Protocol<Event> {
+    type Effect;
+    fn update(&mut self, event: Event) -> Self::Effect;
 
-pub struct With<A, B>(A, B);
+    fn multiplex<P, E>(self, other: P) -> Multiplex<Self, P>
+    where
+        Self: Sized,
+        P: Protocol<E>,
+    {
+        Multiplex(self, other)
+    }
 
-pub enum WithEvent<A, B> {
+    fn feedback<P, E>(self, other: P) -> Feedback<Self, P>
+    where
+        Self: Sized,
+        P: Protocol<E>,
+    {
+        Feedback(self, other)
+    }
+}
+
+pub struct Multiplex<A, B>(A, B);
+
+pub enum BiEvent<A, B> {
     A(A),
     B(B),
 }
 
-pub enum WithEffect<A, B> {
+pub enum BiEffect<A, B> {
     A(A),
     B(B),
 }
 
-impl<A, B, EventA, EventB> Protocol<WithEvent<EventA, EventB>> for With<A, B>
+impl<A, B, EventA, EventB> Protocol<BiEvent<EventA, EventB>> for Multiplex<A, B>
 where
     A: Protocol<EventA>,
     B: Protocol<EventB>,
 {
-    type Effect = WithEffect<A::Effect, B::Effect>;
+    type Effect = BiEffect<A::Effect, B::Effect>;
 
-    fn update(&mut self, event: WithEvent<EventA, EventB>) -> Self::Effect {
+    fn update(&mut self, event: BiEvent<EventA, EventB>) -> Self::Effect {
         match event {
-            WithEvent::A(event) => WithEffect::A(self.0.update(event)),
-            WithEvent::B(event) => WithEffect::B(self.1.update(event)),
+            BiEvent::A(event) => BiEffect::A(self.0.update(event)),
+            BiEvent::B(event) => BiEffect::B(self.1.update(event)),
         }
     }
 }
@@ -34,19 +53,25 @@ pub enum FeedbackEffect<A> {
     External(A),
 }
 
-impl<A, B, EventA> Protocol<EventA> for Feedback<A, B>
+impl<A, B, EventA, EventB> Protocol<BiEvent<EventA, EventB>> for Feedback<A, B>
 where
-    A: Protocol<EventA>,
+    A: Protocol<EventA, Effect = EventB>,
+    B: Protocol<EventB, Effect = EventA>,
     A::Effect: Into<FeedbackEffect<A::Effect>>,
-    B: Protocol<A::Effect, Effect = EventA>,
+    B::Effect: Into<FeedbackEffect<B::Effect>>,
 {
-    type Effect = A::Effect;
-    fn update(&mut self, mut event: EventA) -> Self::Effect {
-        loop {
-            match self.0.update(event).into() {
-                FeedbackEffect::Internal(effect) => event = self.1.update(effect),
-                FeedbackEffect::External(effect) => return effect,
-            }
+    type Effect = BiEffect<A::Effect, B::Effect>;
+
+    fn update(&mut self, event: BiEvent<EventA, EventB>) -> Self::Effect {
+        match event {
+            BiEvent::A(event) => match self.0.update(event).into() {
+                FeedbackEffect::Internal(effect) => self.update(BiEvent::B(effect)),
+                FeedbackEffect::External(effect) => BiEffect::A(effect),
+            },
+            BiEvent::B(event) => match self.1.update(event).into() {
+                FeedbackEffect::Internal(effect) => self.update(BiEvent::A(effect)),
+                FeedbackEffect::External(effect) => BiEffect::B(effect),
+            },
         }
     }
 }

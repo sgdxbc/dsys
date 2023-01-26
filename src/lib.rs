@@ -1,6 +1,6 @@
+pub mod effect;
 pub mod protocol;
+pub mod unreplicated;
 
-pub trait Protocol<Event> {
-    type Effect;
-    fn update(&mut self, event: Event) -> Self::Effect;
-}
+pub use effect::NodeEffect;
+pub use protocol::Protocol;
