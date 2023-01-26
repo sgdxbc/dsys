@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::{NodeAddr, Protocol};
+use crate::{app::App, NodeAddr, Protocol};
 
 #[derive(Debug, Clone)]
 pub struct Request {
@@ -82,16 +82,13 @@ impl Protocol<Event> for Client {
     }
 }
 
-pub struct Replica<A> {
+pub struct Replica {
     op_number: u32,
-    app: A,
+    app: App,
     replies: HashMap<u32, Reply>,
 }
 
-impl<A> Protocol<Event> for Replica<A>
-where
-    A: for<'a> Protocol<&'a [u8], Effect = Box<[u8]>>,
-{
+impl Protocol<Event> for Replica {
     type Effect = Effect;
 
     fn init(&mut self) -> Self::Effect {
@@ -108,7 +105,7 @@ where
             _ => {}
         }
         self.op_number += 1;
-        let result = self.app.update(&request.op);
+        let result = self.app.execute(&request.op);
         let reply = Reply {
             seq: request.seq,
             result,
@@ -121,26 +118,15 @@ where
 #[cfg(test)]
 mod tests {
     use crate::{
+        app,
         network::{Network, NetworkEffect, NetworkEvent, Workload},
         protocol::Multiplex,
+        App,
         NodeAddr::{TestClient, TestReplica},
         Protocol,
     };
 
     use super::{Client, Message, Replica, Timeout};
-
-    struct Echo;
-    impl Protocol<&'_ [u8]> for Echo {
-        type Effect = Box<[u8]>;
-
-        fn init(&mut self) -> Self::Effect {
-            unreachable!()
-        }
-
-        fn update(&mut self, event: &[u8]) -> Self::Effect {
-            event.to_vec().into_boxed_slice()
-        }
-    }
 
     #[test]
     fn single_op() {
@@ -163,7 +149,7 @@ mod tests {
             Multiplex::B(Replica {
                 op_number: 0,
                 replies: Default::default(),
-                app: Echo,
+                app: App::Echo(app::Echo),
             }),
         );
         let mut effect = network.init();
