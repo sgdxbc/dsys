@@ -10,13 +10,24 @@ pub enum NetworkEvent {
 pub enum NetworkEffect {
     DeliverMessage,
     DeliverTimeout,
+    Init,
     Halt,
 }
 
 pub struct Network<N, M, T> {
-    nodes: HashMap<NodeAddr, N>,
+    pub nodes: HashMap<NodeAddr, N>,
     messages: VecDeque<(NodeAddr, M)>,
     timeouts: VecDeque<(NodeAddr, T)>,
+}
+
+impl<N, M, T> Default for Network<N, M, T> {
+    fn default() -> Self {
+        Self {
+            nodes: Default::default(),
+            messages: Default::default(),
+            timeouts: Default::default(),
+        }
+    }
 }
 
 impl<N, M, T> Protocol<NetworkEvent> for Network<N, M, T>
@@ -25,6 +36,18 @@ where
     T: Eq,
 {
     type Effect = NetworkEffect;
+
+    fn init(&mut self) -> Self::Effect {
+        for effect in self
+            .nodes
+            .values_mut()
+            .map(|node| node.init())
+            .collect::<Vec<_>>()
+        {
+            self.push_effect(effect)
+        }
+        NetworkEffect::Init
+    }
 
     fn update(&mut self, event: NetworkEvent) -> Self::Effect {
         match event {
@@ -92,7 +115,51 @@ impl<N, M, T> Network<N, M, T> {
 pub struct Workload<N, O = <Vec<Box<[u8]>> as IntoIterator>::IntoIter> {
     node: N,
     ops: O,
-    results: Vec<Box<[u8]>>,
+    pub results: Vec<Box<[u8]>>,
+}
+
+impl<N, O> Workload<N, O> {
+    pub fn new(node: N, ops: O) -> Self {
+        Self {
+            node,
+            ops,
+            results: Default::default(),
+        }
+    }
+
+    fn work<M, T>(&mut self) -> NodeEffect<M, T>
+    where
+        N: Protocol<NodeEvent<M, T>, Effect = NodeEffect<M, T>>,
+        O: Iterator<Item = Box<[u8]>>,
+    {
+        if let Some(op) = self.ops.next() {
+            self.node.update(NodeEvent::Op(op))
+        } else {
+            NodeEffect::Nop
+        }
+    }
+
+    fn process_effect<M, T>(&mut self, effect: NodeEffect<M, T>) -> NodeEffect<M, T>
+    where
+        N: Protocol<NodeEvent<M, T>, Effect = NodeEffect<M, T>>,
+        O: Iterator<Item = Box<[u8]>>,
+    {
+        match effect {
+            NodeEffect::Notify(result) => {
+                self.results.push(result);
+                self.work()
+            }
+            NodeEffect::Compose(mut effects) => {
+                if effects.is_empty() {
+                    NodeEffect::Nop
+                } else {
+                    let effect = effects.pop().unwrap();
+                    self.process_effect(effect) + self.process_effect(NodeEffect::Compose(effects))
+                }
+            }
+            effect => effect,
+        }
+    }
 }
 
 impl<N, O, M, T> Protocol<NodeEvent<M, T>> for Workload<N, O>
@@ -102,17 +169,12 @@ where
 {
     type Effect = NodeEffect<M, T>;
 
+    fn init(&mut self) -> Self::Effect {
+        self.work()
+    }
+
     fn update(&mut self, event: NodeEvent<M, T>) -> Self::Effect {
-        match self.node.update(event) {
-            NodeEffect::Notify(result) => {
-                self.results.push(result);
-                if let Some(op) = self.ops.next() {
-                    self.node.update(NodeEvent::Op(op))
-                } else {
-                    NodeEffect::Nop
-                }
-            }
-            effect => effect,
-        }
+        let effect = self.node.update(event);
+        self.process_effect(effect)
     }
 }

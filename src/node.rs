@@ -7,12 +7,14 @@ pub enum NodeAddr {
     Socket(SocketAddr),
 }
 
+#[derive(Debug)]
 pub enum NodeEvent<M, T> {
-    Op(Box<[u8]>),
     Handle(M),
     On(T),
+    Op(Box<[u8]>),
 }
 
+#[derive(Debug)]
 pub enum NodeEffect<M, T> {
     Nop,
     Notify(Box<[u8]>),

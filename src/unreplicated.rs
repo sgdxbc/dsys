@@ -1,6 +1,6 @@
-use std::{collections::HashMap, convert::Infallible};
+use std::collections::HashMap;
 
-use crate::{NodeAddr, NodeEffect, NodeEvent, Protocol};
+use crate::{NodeAddr, Protocol};
 
 #[derive(Debug, Clone)]
 pub struct Request {
@@ -16,8 +16,19 @@ pub struct Reply {
     result: Box<[u8]>,
 }
 
+#[derive(Debug, Clone)]
+pub enum Message {
+    Request(Request),
+    Reply(Reply),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ResendTimeout;
+pub enum Timeout {
+    Resend,
+}
+
+type Event = crate::NodeEvent<Message, Timeout>;
+type Effect = crate::NodeEffect<Message, Timeout>;
 
 pub struct Client {
     id: u32,
@@ -27,12 +38,16 @@ pub struct Client {
     op: Option<Box<[u8]>>,
 }
 
-impl Protocol<NodeEvent<Reply, ResendTimeout>> for Client {
-    type Effect = NodeEffect<Request, ResendTimeout>;
+impl Protocol<Event> for Client {
+    type Effect = Effect;
 
-    fn update(&mut self, event: NodeEvent<Reply, ResendTimeout>) -> Self::Effect {
+    fn init(&mut self) -> Self::Effect {
+        Effect::Nop
+    }
+
+    fn update(&mut self, event: Event) -> Self::Effect {
         match event {
-            NodeEvent::Op(op) => {
+            Event::Op(op) => {
                 assert!(self.op.is_none());
                 self.op = Some(op.clone());
                 self.seq += 1;
@@ -42,26 +57,27 @@ impl Protocol<NodeEvent<Reply, ResendTimeout>> for Client {
                     seq: self.seq,
                     op,
                 };
-                NodeEffect::Send(self.replica_addr, request)
-                    + NodeEffect::Set(self.addr, ResendTimeout)
+                Effect::Send(self.replica_addr, Message::Request(request))
+                    + Effect::Set(self.addr, Timeout::Resend)
             }
-            NodeEvent::On(ResendTimeout) => {
+            Event::On(Timeout::Resend) => {
                 let request = Request {
                     client_id: self.id,
                     client_addr: self.addr,
                     seq: self.seq,
                     op: self.op.clone().unwrap(),
                 };
-                NodeEffect::Send(self.replica_addr, request)
-                    + NodeEffect::Set(self.addr, ResendTimeout)
+                Effect::Send(self.replica_addr, Message::Request(request))
+                    + Effect::Set(self.addr, Timeout::Resend)
             }
-            NodeEvent::Handle(reply) => {
+            Event::Handle(Message::Reply(reply)) => {
                 if self.op.is_none() || reply.seq != self.seq {
-                    return NodeEffect::Nop;
+                    return Effect::Nop;
                 }
                 self.op = None;
-                NodeEffect::Notify(reply.result) + NodeEffect::Unset(self.addr, ResendTimeout)
+                Effect::Notify(reply.result) + Effect::Unset(self.addr, Timeout::Resend)
             }
+            _ => unreachable!(),
         }
     }
 }
@@ -72,18 +88,22 @@ pub struct Replica<A> {
     replies: HashMap<u32, Reply>,
 }
 
-impl<A> Protocol<NodeEvent<Request, Infallible>> for Replica<A>
+impl<A> Protocol<Event> for Replica<A>
 where
     A: for<'a> Protocol<&'a [u8], Effect = Box<[u8]>>,
 {
-    type Effect = NodeEffect<Reply, Infallible>;
+    type Effect = Effect;
 
-    fn update(&mut self, event: NodeEvent<Request, Infallible>) -> Self::Effect {
-        let NodeEvent::Handle(request) = event else { unreachable!() };
+    fn init(&mut self) -> Self::Effect {
+        Effect::Nop
+    }
+
+    fn update(&mut self, event: Event) -> Self::Effect {
+        let Event::Handle(Message::Request(request)) = event else { unreachable!() };
         match self.replies.get(&request.client_id) {
-            Some(reply) if reply.seq > request.seq => return NodeEffect::Nop,
+            Some(reply) if reply.seq > request.seq => return Effect::Nop,
             Some(reply) if reply.seq == request.seq => {
-                return NodeEffect::Send(request.client_addr, reply.clone())
+                return Effect::Send(request.client_addr, Message::Reply(reply.clone()))
             }
             _ => {}
         }
@@ -94,6 +114,68 @@ where
             result,
         };
         self.replies.insert(request.client_id, reply.clone());
-        NodeEffect::Send(request.client_addr, reply)
+        Effect::Send(request.client_addr, Message::Reply(reply))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        network::{Network, NetworkEffect, NetworkEvent, Workload},
+        protocol::Multiplex,
+        NodeAddr::{TestClient, TestReplica},
+        Protocol,
+    };
+
+    use super::{Client, Message, Replica, Timeout};
+
+    struct Echo;
+    impl Protocol<&'_ [u8]> for Echo {
+        type Effect = Box<[u8]>;
+
+        fn init(&mut self) -> Self::Effect {
+            unreachable!()
+        }
+
+        fn update(&mut self, event: &[u8]) -> Self::Effect {
+            event.to_vec().into_boxed_slice()
+        }
+    }
+
+    #[test]
+    fn single_op() {
+        let mut network = Network::<_, Message, Timeout>::default();
+        network.nodes.insert(
+            TestClient(0),
+            Multiplex::A(Workload::new(
+                Client {
+                    id: 0,
+                    addr: TestClient(0),
+                    replica_addr: TestReplica(0),
+                    seq: 0,
+                    op: None,
+                },
+                vec![b"hello".to_vec().into_boxed_slice()].into_iter(),
+            )),
+        );
+        network.nodes.insert(
+            TestReplica(0),
+            Multiplex::B(Replica {
+                op_number: 0,
+                replies: Default::default(),
+                app: Echo,
+            }),
+        );
+        let mut effect = network.init();
+        assert!(matches!(effect, NetworkEffect::Init));
+        while {
+            effect = network.update(NetworkEvent::Progress);
+            matches!(effect, NetworkEffect::DeliverMessage)
+        } {}
+        assert!(matches!(effect, NetworkEffect::Halt));
+        let Multiplex::A(workload) = &network.nodes[&TestClient(0)] else {
+            unreachable!()
+        };
+        assert_eq!(workload.results, vec![b"hello".to_vec().into()]);
     }
 }
