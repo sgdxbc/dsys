@@ -1,14 +1,22 @@
 use std::{
+    ffi::c_int,
     io::ErrorKind,
     net::UdpSocket,
     panic::panic_any,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     thread::{spawn, JoinHandle},
     time::{Duration, Instant},
 };
 
 use bincode::Options;
 use crossbeam::channel::{self, Receiver, RecvTimeoutError, Sender};
+use nix::sys::{
+    signal::{sigaction, SaFlags, SigAction, SigHandler, Signal::SIGINT},
+    signalfd::SigSet,
+};
 use serde::{de::DeserializeOwned, Serialize};
 
 use crate::{NodeAddr, NodeEffect, NodeEvent, Protocol};
@@ -94,8 +102,21 @@ impl<N, M> Transport<N, M> {
     where
         M: DeserializeOwned,
     {
+        static INTERRUPTED: AtomicBool = AtomicBool::new(false);
+        extern "C" fn interrupt(_: c_int) {
+            INTERRUPTED.store(true, Ordering::SeqCst);
+        }
+        let action = &SigAction::new(
+            SigHandler::Handler(interrupt),
+            SaFlags::empty(),
+            SigSet::empty(),
+        );
+        let action = unsafe { sigaction(SIGINT, action) }.unwrap();
+
         let mut buf = [0; 1500];
-        loop {
+        while !INTERRUPTED.load(Ordering::SeqCst) {
+            // there could be a small chance that interruption happens here and `recv_from` blocks indefinitely
+            // i can accept to manually kill in such case
             match self.socket.recv_from(&mut buf) {
                 Ok((len, _)) => {
                     let message = bincode::options()
@@ -108,6 +129,7 @@ impl<N, M> Transport<N, M> {
                 Err(err) => panic_any(err),
             }
         }
+        unsafe { sigaction(SIGINT, &action) }.unwrap();
     }
 
     pub fn stop(self) -> N {

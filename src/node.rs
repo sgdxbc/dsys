@@ -1,4 +1,12 @@
-use std::{net::SocketAddr, ops::Add};
+use std::{
+    net::SocketAddr,
+    ops::Add,
+    sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc,
+    },
+    time::{Duration, Instant},
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -50,6 +58,10 @@ pub struct Workload<N, I> {
     node: N,
     ops: I,
     pub results: Vec<Box<[u8]>>,
+    benchmark: bool,
+    instant: Instant,
+    pub latencies: Vec<Duration>,
+    pub count: Arc<AtomicU32>,
 }
 
 impl<N, I> Workload<N, I> {
@@ -58,6 +70,22 @@ impl<N, I> Workload<N, I> {
             node,
             ops,
             results: Default::default(),
+            benchmark: false,
+            instant: Instant::now(),
+            latencies: Default::default(),
+            count: Default::default(),
+        }
+    }
+
+    pub fn new_benchmark(node: N, ops: I, count: Arc<AtomicU32>) -> Self {
+        Self {
+            node,
+            ops,
+            results: Default::default(),
+            instant: Instant::now(),
+            benchmark: true,
+            latencies: Default::default(),
+            count,
         }
     }
 
@@ -68,6 +96,7 @@ impl<N, I> Workload<N, I> {
         O: Into<Box<[u8]>>,
     {
         if let Some(op) = self.ops.next() {
+            self.instant = Instant::now();
             self.node.update(NodeEvent::Op(op.into()))
         } else {
             NodeEffect::Nop
@@ -82,7 +111,12 @@ impl<N, I> Workload<N, I> {
     {
         match effect {
             NodeEffect::Notify(result) => {
-                self.results.push(result);
+                if self.benchmark {
+                    self.latencies.push(Instant::now() - self.instant);
+                    self.count.fetch_add(1, Ordering::SeqCst);
+                } else {
+                    self.results.push(result);
+                }
                 // TODO able to throttle
                 self.work()
             }
