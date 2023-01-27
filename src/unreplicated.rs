@@ -145,11 +145,11 @@ impl Protocol<Event> for Replica {
 mod tests {
     use crate::{
         app,
+        node::Workload,
         protocol::Multiplex,
-        simulate::{Simulate, SimulateEffect, SimulateEvent, Workload},
-        App,
+        simulate, App,
         NodeAddr::{TestClient, TestReplica},
-        Protocol,
+        Simulate,
     };
 
     use super::{Client, Message, Replica, Timeout};
@@ -168,13 +168,13 @@ mod tests {
             TestReplica(0),
             Multiplex::B(Replica::new(App::Echo(app::Echo))),
         );
-        let mut effect = simulate.init();
-        assert!(matches!(effect, SimulateEffect::Init));
+        simulate.init();
+        let mut effect;
         while {
-            effect = simulate.update(SimulateEvent::Progress);
-            matches!(effect, SimulateEffect::DeliverMessage)
+            effect = simulate.progress();
+            matches!(effect, simulate::Progress::DeliverMessage)
         } {}
-        assert!(matches!(effect, SimulateEffect::Halt));
+        assert!(matches!(effect, simulate::Progress::Halt));
         let Multiplex::A(workload) = &simulate.nodes[&TestClient(0)] else {
             unreachable!()
         };
