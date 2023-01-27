@@ -1,8 +1,10 @@
 use std::{net::SocketAddr, ops::Add};
 
+use serde::{Deserialize, Serialize};
+
 use crate::Protocol;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum NodeAddr {
     TestClient(u32),
     TestReplica(u32),

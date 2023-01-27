@@ -1,6 +1,6 @@
 use std::{
     io::ErrorKind,
-    net::{ToSocketAddrs, UdpSocket},
+    net::UdpSocket,
     panic::panic_any,
     sync::Arc,
     thread::{spawn, JoinHandle},
@@ -20,12 +20,12 @@ pub struct Transport<N, M> {
 }
 
 impl<N, M> Transport<N, M> {
-    pub fn new(node: N, addr: impl ToSocketAddrs) -> Self
+    pub fn new(node: N, socket: UdpSocket) -> Self
     where
         N: Send + 'static + Protocol<NodeEvent<M>, Effect = NodeEffect<M>>,
         M: Send + 'static + Serialize,
     {
-        let socket = Arc::new(UdpSocket::bind(addr).unwrap());
+        let socket = Arc::new(socket);
         let channel = channel::unbounded();
         Self {
             socket: socket.clone(),
@@ -42,6 +42,7 @@ impl<N, M> Transport<N, M> {
         let effect_channel = channel::unbounded();
         let effect_thread = spawn(move || Self::run_effect(effect_channel.1, socket));
 
+        perform_effect(node.init(), &effect_channel.0);
         let mut deadline = Instant::now() + Duration::from_millis(10);
         loop {
             let effect;

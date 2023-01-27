@@ -1,8 +1,10 @@
 use std::collections::HashMap;
 
+use serde::{Deserialize, Serialize};
+
 use crate::{app::App, NodeAddr, Protocol};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Request {
     client_id: u32,
     client_addr: NodeAddr,
@@ -10,13 +12,13 @@ pub struct Request {
     op: Box<[u8]>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Reply {
     seq: u32,
     result: Box<[u8]>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Message {
     Request(Request),
     Reply(Reply),
@@ -31,6 +33,7 @@ pub struct Client {
     replica_addr: NodeAddr,
     seq: u32,
     op: Option<Box<[u8]>>,
+    ticked: u32,
 }
 
 impl Client {
@@ -41,6 +44,7 @@ impl Client {
             replica_addr,
             seq: 0,
             op: None,
+            ticked: 0,
         }
     }
 }
@@ -58,6 +62,7 @@ impl Protocol<Event> for Client {
                 assert!(self.op.is_none());
                 self.op = Some(op.clone());
                 self.seq += 1;
+                self.ticked = 0;
                 let request = Request {
                     client_id: self.id,
                     client_addr: self.addr,
@@ -67,11 +72,21 @@ impl Protocol<Event> for Client {
                 Effect::Send(self.replica_addr, Message::Request(request))
             }
             Event::Tick => {
+                let Some(op) = &self.op else {
+                    return Effect::Nop
+                };
+                self.ticked += 1;
+                if self.ticked == 1 {
+                    return Effect::Nop;
+                }
+                if self.ticked == 2 {
+                    println!("resend");
+                }
                 let request = Request {
                     client_id: self.id,
                     client_addr: self.addr,
                     seq: self.seq,
-                    op: self.op.clone().unwrap(),
+                    op: op.clone(),
                 };
                 Effect::Send(self.replica_addr, Message::Request(request))
             }
@@ -111,7 +126,11 @@ impl Protocol<Event> for Replica {
     }
 
     fn update(&mut self, event: Event) -> Self::Effect {
-        let Event::Handle(Message::Request(request)) = event else { unreachable!() };
+        let request = match event {
+            Event::Handle(Message::Request(request)) => request,
+            Event::Tick => return Effect::Nop,
+            _ => unreachable!(),
+        };
         match self.replies.get(&request.client_id) {
             Some(reply) if reply.seq > request.seq => return Effect::Nop,
             Some(reply) if reply.seq == request.seq => {
