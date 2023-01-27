@@ -1,5 +1,5 @@
 pub mod app;
-pub mod network;
+pub mod simulate;
 pub mod node;
 pub mod protocol;
 pub mod unreplicated;

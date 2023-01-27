@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, ops::Add};
+use std::{net::SocketAddr, ops::Add, time::Duration};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NodeAddr {
@@ -19,8 +19,8 @@ pub enum NodeEffect<M, T> {
     Nop,
     Notify(Box<[u8]>),
     Send(NodeAddr, M),
-    Set(NodeAddr, T),
-    Reset(NodeAddr, T),
+    Set(NodeAddr, T, Duration),
+    Reset(NodeAddr, T, Duration),
     Unset(NodeAddr, T),
     Compose(Vec<NodeEffect<M, T>>),
 }

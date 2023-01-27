@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, time::Duration};
 
 use crate::{app::App, NodeAddr, Protocol};
 
@@ -22,9 +22,13 @@ pub enum Message {
     Reply(Reply),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Timeout {
     Resend,
+}
+
+impl Timeout {
+    const WAIT_RESEND: Duration = Duration::from_millis(10);
 }
 
 type Event = crate::NodeEvent<Message, Timeout>;
@@ -36,6 +40,18 @@ pub struct Client {
     replica_addr: NodeAddr,
     seq: u32,
     op: Option<Box<[u8]>>,
+}
+
+impl Client {
+    pub fn new(id: u32, addr: NodeAddr, replica_addr: NodeAddr) -> Self {
+        Self {
+            id,
+            addr,
+            replica_addr,
+            seq: 0,
+            op: None,
+        }
+    }
 }
 
 impl Protocol<Event> for Client {
@@ -58,7 +74,7 @@ impl Protocol<Event> for Client {
                     op,
                 };
                 Effect::Send(self.replica_addr, Message::Request(request))
-                    + Effect::Set(self.addr, Timeout::Resend)
+                    + Effect::Set(self.addr, Timeout::Resend, Timeout::WAIT_RESEND)
             }
             Event::On(Timeout::Resend) => {
                 let request = Request {
@@ -68,7 +84,7 @@ impl Protocol<Event> for Client {
                     op: self.op.clone().unwrap(),
                 };
                 Effect::Send(self.replica_addr, Message::Request(request))
-                    + Effect::Set(self.addr, Timeout::Resend)
+                    + Effect::Set(self.addr, Timeout::Resend, Timeout::WAIT_RESEND)
             }
             Event::Handle(Message::Reply(reply)) => {
                 if self.op.is_none() || reply.seq != self.seq {
@@ -86,6 +102,16 @@ pub struct Replica {
     op_number: u32,
     app: App,
     replies: HashMap<u32, Reply>,
+}
+
+impl Replica {
+    pub fn new(app: App) -> Self {
+        Self {
+            op_number: 0,
+            app,
+            replies: Default::default(),
+        }
+    }
 }
 
 impl Protocol<Event> for Replica {
@@ -119,8 +145,8 @@ impl Protocol<Event> for Replica {
 mod tests {
     use crate::{
         app,
-        network::{Network, NetworkEffect, NetworkEvent, Workload},
         protocol::Multiplex,
+        simulate::{Simulate, SimulateEffect, SimulateEvent, Workload},
         App,
         NodeAddr::{TestClient, TestReplica},
         Protocol,
@@ -130,38 +156,29 @@ mod tests {
 
     #[test]
     fn single_op() {
-        let mut network = Network::<_, Message, Timeout>::default();
-        network.nodes.insert(
+        let mut simulate = Simulate::<_, Message, Timeout>::default();
+        simulate.nodes.insert(
             TestClient(0),
             Multiplex::A(Workload::new(
-                Client {
-                    id: 0,
-                    addr: TestClient(0),
-                    replica_addr: TestReplica(0),
-                    seq: 0,
-                    op: None,
-                },
-                vec![b"hello".to_vec().into_boxed_slice()].into_iter(),
+                Client::new(0, TestClient(0), TestReplica(0)),
+                [b"hello".to_vec()].into_iter(),
             )),
         );
-        network.nodes.insert(
+        simulate.nodes.insert(
             TestReplica(0),
-            Multiplex::B(Replica {
-                op_number: 0,
-                replies: Default::default(),
-                app: App::Echo(app::Echo),
-            }),
+            Multiplex::B(Replica::new(App::Echo(app::Echo))),
         );
-        let mut effect = network.init();
-        assert!(matches!(effect, NetworkEffect::Init));
+        let mut effect = simulate.init();
+        assert!(matches!(effect, SimulateEffect::Init));
         while {
-            effect = network.update(NetworkEvent::Progress);
-            matches!(effect, NetworkEffect::DeliverMessage)
+            effect = simulate.update(SimulateEvent::Progress);
+            matches!(effect, SimulateEffect::DeliverMessage)
         } {}
-        assert!(matches!(effect, NetworkEffect::Halt));
-        let Multiplex::A(workload) = &network.nodes[&TestClient(0)] else {
+        assert!(matches!(effect, SimulateEffect::Halt));
+        let Multiplex::A(workload) = &simulate.nodes[&TestClient(0)] else {
             unreachable!()
         };
-        assert_eq!(workload.results, vec![b"hello".to_vec().into()]);
+        assert_eq!(workload.results.len(), 1);
+        assert_eq!(&*workload.results[0], &b"hello"[..]);
     }
 }
