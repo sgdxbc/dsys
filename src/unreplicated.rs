@@ -1,4 +1,4 @@
-use std::{collections::HashMap, time::Duration};
+use std::collections::HashMap;
 
 use crate::{app::App, NodeAddr, Protocol};
 
@@ -22,17 +22,8 @@ pub enum Message {
     Reply(Reply),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Timeout {
-    Resend,
-}
-
-impl Timeout {
-    const WAIT_RESEND: Duration = Duration::from_millis(10);
-}
-
-type Event = crate::NodeEvent<Message, Timeout>;
-type Effect = crate::NodeEffect<Message, Timeout>;
+type Event = crate::NodeEvent<Message>;
+type Effect = crate::NodeEffect<Message>;
 
 pub struct Client {
     id: u32,
@@ -74,9 +65,8 @@ impl Protocol<Event> for Client {
                     op,
                 };
                 Effect::Send(self.replica_addr, Message::Request(request))
-                    + Effect::Set(self.addr, Timeout::Resend, Timeout::WAIT_RESEND)
             }
-            Event::On(Timeout::Resend) => {
+            Event::Tick => {
                 let request = Request {
                     client_id: self.id,
                     client_addr: self.addr,
@@ -84,14 +74,13 @@ impl Protocol<Event> for Client {
                     op: self.op.clone().unwrap(),
                 };
                 Effect::Send(self.replica_addr, Message::Request(request))
-                    + Effect::Set(self.addr, Timeout::Resend, Timeout::WAIT_RESEND)
             }
             Event::Handle(Message::Reply(reply)) => {
                 if self.op.is_none() || reply.seq != self.seq {
                     return Effect::Nop;
                 }
                 self.op = None;
-                Effect::Notify(reply.result) + Effect::Unset(self.addr, Timeout::Resend)
+                Effect::Notify(reply.result)
             }
             _ => unreachable!(),
         }
@@ -152,11 +141,11 @@ mod tests {
         Simulate,
     };
 
-    use super::{Client, Message, Replica, Timeout};
+    use super::{Client, Message, Replica};
 
     #[test]
     fn single_op() {
-        let mut simulate = Simulate::<_, Message, Timeout>::default();
+        let mut simulate = Simulate::<_, Message>::default();
         simulate.nodes.insert(
             TestClient(0),
             Multiplex::A(Workload::new(

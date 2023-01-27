@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, ops::Add, time::Duration};
+use std::{net::SocketAddr, ops::Add};
 
 use crate::Protocol;
 
@@ -10,24 +10,21 @@ pub enum NodeAddr {
 }
 
 #[derive(Debug)]
-pub enum NodeEvent<M, T> {
+pub enum NodeEvent<M> {
     Handle(M),
-    On(T),
     Op(Box<[u8]>),
+    Tick,
 }
 
 #[derive(Debug)]
-pub enum NodeEffect<M, T> {
+pub enum NodeEffect<M> {
     Nop,
     Notify(Box<[u8]>),
     Send(NodeAddr, M),
-    Set(NodeAddr, T, Duration),
-    Reset(NodeAddr, T, Duration),
-    Unset(NodeAddr, T),
-    Compose(Vec<NodeEffect<M, T>>),
+    Compose(Vec<NodeEffect<M>>),
 }
 
-impl<M, T> Add for NodeEffect<M, T> {
+impl<M> Add for NodeEffect<M> {
     type Output = Self;
 
     fn add(self, other: Self) -> Self::Output {
@@ -62,9 +59,9 @@ impl<N, I> Workload<N, I> {
         }
     }
 
-    fn work<M, T, O>(&mut self) -> NodeEffect<M, T>
+    fn work<M, O>(&mut self) -> NodeEffect<M>
     where
-        N: Protocol<NodeEvent<M, T>, Effect = NodeEffect<M, T>>,
+        N: Protocol<NodeEvent<M>, Effect = NodeEffect<M>>,
         I: Iterator<Item = O>,
         O: Into<Box<[u8]>>,
     {
@@ -75,15 +72,16 @@ impl<N, I> Workload<N, I> {
         }
     }
 
-    fn process_effect<M, T, O>(&mut self, effect: NodeEffect<M, T>) -> NodeEffect<M, T>
+    fn process_effect<M, O>(&mut self, effect: NodeEffect<M>) -> NodeEffect<M>
     where
-        N: Protocol<NodeEvent<M, T>, Effect = NodeEffect<M, T>>,
+        N: Protocol<NodeEvent<M>, Effect = NodeEffect<M>>,
         I: Iterator<Item = O>,
         O: Into<Box<[u8]>>,
     {
         match effect {
             NodeEffect::Notify(result) => {
                 self.results.push(result);
+                // TODO able to throttle
                 self.work()
             }
             NodeEffect::Compose(mut effects) => {
@@ -99,19 +97,19 @@ impl<N, I> Workload<N, I> {
     }
 }
 
-impl<N, I, O, M, T> Protocol<NodeEvent<M, T>> for Workload<N, I>
+impl<N, I, O, M> Protocol<NodeEvent<M>> for Workload<N, I>
 where
-    N: Protocol<NodeEvent<M, T>, Effect = NodeEffect<M, T>>,
+    N: Protocol<NodeEvent<M>, Effect = NodeEffect<M>>,
     I: Iterator<Item = O>,
     O: Into<Box<[u8]>>,
 {
-    type Effect = NodeEffect<M, T>;
+    type Effect = NodeEffect<M>;
 
     fn init(&mut self) -> Self::Effect {
         self.work()
     }
 
-    fn update(&mut self, event: NodeEvent<M, T>) -> Self::Effect {
+    fn update(&mut self, event: NodeEvent<M>) -> Self::Effect {
         let effect = self.node.update(event);
         self.process_effect(effect)
     }

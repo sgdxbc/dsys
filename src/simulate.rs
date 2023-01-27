@@ -1,41 +1,32 @@
-use std::{
-    collections::{BTreeMap, HashMap, VecDeque},
-    hash::Hash,
-};
+use std::collections::{HashMap, VecDeque};
 
 use crate::{NodeAddr, NodeEffect, NodeEvent, Protocol};
 
 pub enum Progress {
     DeliverMessage,
-    DeliverTimeout(u64),
     Halt,
 }
 
-pub struct Simulate<N, M, T> {
+pub struct Simulate<N, M> {
     pub nodes: HashMap<NodeAddr, N>,
     messages: VecDeque<(NodeAddr, M)>,
-    now_millis: u64,
-    timeout_millis: BTreeMap<u64, (NodeAddr, T)>,
-    timeouts: HashMap<(NodeAddr, T), u64>,
+    tick_count: HashMap<NodeAddr, u32>,
 }
 
-impl<N, M, T> Default for Simulate<N, M, T> {
+impl<N, M> Default for Simulate<N, M> {
     fn default() -> Self {
         Self {
             nodes: Default::default(),
+            tick_count: Default::default(),
             messages: Default::default(),
-            now_millis: 0,
-            timeout_millis: Default::default(),
-            timeouts: Default::default(),
         }
     }
 }
 
-impl<N, M, T> Simulate<N, M, T> {
+impl<N, M> Simulate<N, M> {
     pub fn init(&mut self)
     where
-        N: Protocol<NodeEvent<M, T>, Effect = NodeEffect<M, T>>,
-        T: Eq + Hash + Clone,
+        N: Protocol<NodeEvent<M>, Effect = NodeEffect<M>>,
     {
         for effect in self
             .nodes
@@ -49,36 +40,30 @@ impl<N, M, T> Simulate<N, M, T> {
 
     pub fn progress(&mut self) -> Progress
     where
-        N: Protocol<NodeEvent<M, T>, Effect = NodeEffect<M, T>>,
-        T: Eq + Hash + Clone,
+        N: Protocol<NodeEvent<M>, Effect = NodeEffect<M>>,
     {
-        if let Some((destination, message)) = self.messages.pop_front() {
-            let effect = self
-                .nodes
-                .get_mut(&destination)
-                .unwrap()
-                .update(NodeEvent::Handle(message));
-            self.push_effect(effect);
-            return Progress::DeliverMessage;
-        }
-        if let Some((now, (destination, timeout))) = self.timeout_millis.pop_first() {
-            self.timeouts.remove(&(destination, timeout.clone()));
-            self.now_millis = now;
-            let effect = self
-                .nodes
-                .get_mut(&destination)
-                .unwrap()
-                .update(NodeEvent::On(timeout));
-            self.push_effect(effect);
-            return Progress::DeliverTimeout(self.now_millis);
-        }
-        Progress::Halt
+        let Some((destination, message)) = self.messages.pop_front() else {
+            return Progress::Halt;
+        };
+        let effect = self
+            .nodes
+            .get_mut(&destination)
+            .unwrap()
+            .update(NodeEvent::Handle(message));
+        self.push_effect(effect);
+        Progress::DeliverMessage
     }
 
-    fn push_effect(&mut self, effect: NodeEffect<M, T>)
+    pub fn tick(&mut self, addr: NodeAddr)
     where
-        T: Eq + Hash + Clone,
+        N: Protocol<NodeEvent<M>, Effect = NodeEffect<M>>,
     {
+        *self.tick_count.entry(addr).or_default() += 1;
+        let effect = self.nodes.get_mut(&addr).unwrap().update(NodeEvent::Tick);
+        self.push_effect(effect);
+    }
+
+    fn push_effect(&mut self, effect: NodeEffect<M>) {
         match effect {
             NodeEffect::Compose(effects) => {
                 for effect in effects {
@@ -88,19 +73,6 @@ impl<N, M, T> Simulate<N, M, T> {
             NodeEffect::Nop => {}
             NodeEffect::Notify(_) => unreachable!(),
             NodeEffect::Send(address, message) => self.messages.push_back((address, message)),
-            NodeEffect::Set(address, timeout, wait) => {
-                let at = self.now_millis + wait.as_millis() as u64;
-                self.timeout_millis.insert(at, (address, timeout.clone()));
-                self.timeouts.insert((address, timeout), at);
-            }
-            NodeEffect::Unset(address, timeout) => {
-                let at = self.timeouts.remove(&(address, timeout)).unwrap();
-                self.timeout_millis.remove(&at);
-            }
-            NodeEffect::Reset(address, timeout, wait) => {
-                self.push_effect(NodeEffect::Unset(address, timeout.clone()));
-                self.push_effect(NodeEffect::Set(address, timeout, wait));
-            }
         }
     }
 }
