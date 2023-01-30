@@ -11,6 +11,7 @@ with open('addresses.txt') as addresses:
         if role == 'replica':
             task = Sequential([
                 RemoteHost(address).run(['sudo', 'ethtool', '-L', interface, 'combined', '1']),
-                RemoteHost(address).run(['export', 'IRQBALANCE_BANNED_CPULIST=0-6', ';', 'irqbalance'])])
+                RemoteHost(address).run(['echo', 'IRQBALANCE_BANNED_CPULIST=0-6', '|', 'sudo', 'tee', '/etc/default/irqbalance']),
+                RemoteHost(address).run(['sudo', 'service', 'irqbalance', 'restart'])])
             tasks.append(task)
 Parallel(tasks).start(wait=True)

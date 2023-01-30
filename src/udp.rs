@@ -31,6 +31,11 @@ enum RunEvent<M> {
     Stop,
 }
 
+enum EffectEvent<M> {
+    Send(NodeAddr, M),
+    Broadcast(M),
+}
+
 pub fn run<N, M>(node: N, socket: UdpSocket, affinity: Option<Range<usize>>) -> TransportRun<N, M>
 where
     N: Send + 'static + Protocol<NodeEvent<M>, Effect = NodeEffect<M>>,
@@ -106,7 +111,7 @@ impl<N, M> TransportRun<N, M> {
 fn run_node<N, M>(
     mut node: N,
     channel: Receiver<RunEvent<M>>,
-    effect_channel: Sender<(NodeAddr, M)>,
+    effect_channel: Sender<EffectEvent<M>>,
 ) -> N
 where
     N: Protocol<NodeEvent<M>, Effect = NodeEffect<M>>,
@@ -128,7 +133,7 @@ where
         perform_effect(effect, &effect_channel);
     }
 
-    fn perform_effect<M>(effect: NodeEffect<M>, channel: &Sender<(NodeAddr, M)>) {
+    fn perform_effect<M>(effect: NodeEffect<M>, channel: &Sender<EffectEvent<M>>) {
         match effect {
             NodeEffect::Compose(effects) => {
                 for effect in effects {
@@ -137,7 +142,9 @@ where
             }
             NodeEffect::Nop => {}
             NodeEffect::Notify(_) => panic!(),
-            NodeEffect::Send(destination, message) => channel.send((destination, message)).unwrap(),
+            NodeEffect::Send(destination, message) => channel
+                .send(EffectEvent::Send(destination, message))
+                .unwrap(),
         }
     }
 
@@ -166,15 +173,18 @@ where
     }
 }
 
-fn run_effect<M>(channel: Receiver<(NodeAddr, M)>, socket: Arc<UdpSocket>)
+fn run_effect<M>(channel: Receiver<EffectEvent<M>>, socket: Arc<UdpSocket>)
 where
     M: Serialize,
 {
-    while let Ok((addr, message)) = channel.recv() {
-        let NodeAddr::Socket(addr) = addr else {
-                panic!()
-            };
-        let buf = bincode::options().serialize(&message).unwrap();
-        socket.send_to(&buf, addr).unwrap();
+    while let Ok(event) = channel.recv() {
+        match event {
+            EffectEvent::Send(NodeAddr::Socket(addr), message) => {
+                let buf = bincode::options().serialize(&message).unwrap();
+                socket.send_to(&buf, addr).unwrap();
+            }
+            EffectEvent::Send(..) => unreachable!(),
+            EffectEvent::Broadcast(message) => todo!(),
+        }
     }
 }
