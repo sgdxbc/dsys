@@ -29,6 +29,18 @@ def params_client(i):
     }
 
 
+def params_seq(i):
+    assert i == 0
+    ip = '172.31.0.4'
+    return {
+        'SubnetId': 'subnet-008ff4a08e63a0794',
+        'PrivateIpAddress': ip,
+        'ImageId': 'ami-0bc44b8dc7cae9c34',
+        'InstanceType': 'c6i.16xlarge',
+        'KeyName': 'Ephemeral',        
+    }
+
+
 params = {
     'replica': params_replica,
     'client': params_client,
@@ -44,10 +56,10 @@ if sys.argv[1:2] == ['launch']:
             instance = ec2.create_instances(
                 **params[role](i), 
                 MinCount=1, MaxCount=1, 
-                TagSpecifications=[{'ResourceType': 'instance', 'Tags': [{'Key': 'role', 'Value': 'replica'}]}],
+                TagSpecifications=[{'ResourceType': 'instance', 'Tags': [{'Key': 'role', 'Value': role}]}],
             )[0]
             instances.append(instance)
-            addresses += f'{role}\t{instance.private_ip_address}\n'
+            addresses += f'{role:12}{instance.private_ip_address}\n'
     for instance in instances:
         instance.wait_until_running()
         print('.', end='', flush=True)
