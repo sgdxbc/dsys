@@ -35,7 +35,7 @@ params = {
 }
 ec2 = boto3.resource('ec2', region_name='ap-east-1')
 
-if sys.argv[1:2] == ['create']:
+if sys.argv[1:2] == ['launch']:
     instances = []
     addresses = ''
     for arg in sys.argv[2:]:
@@ -58,13 +58,12 @@ elif sys.argv[1:2] == ['terminate']:
     instances = ec2.instances.filter(Filters=[
         {'Name': 'instance-state-name', 'Values': ['running']},  # other states?
         {'Name': 'tag:role', 'Values': ['*']}])
-    print(instances)
     instances.terminate()
-    for instance in instances:
-        instance.wait_until_terminated()
-        print('.', end='', flush=True)
-    print()
+    # for instance in instances:
+    #     instance.wait_until_terminated()
+    #     print('.', end='', flush=True)
+    # print()
     with open('addresses.txt', 'w') as addresses_file:
         pass  # clear it
 else:
-    print(f'Usage: {sys.argv[0]} create|terminate')
+    print(f'Usage: {sys.argv[0]} launch|terminate')

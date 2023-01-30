@@ -44,13 +44,14 @@ fn main() {
         repeat_with::<Box<[u8]>, _>(Default::default),
         mode.clone(),
     );
-    let transport = run(node, socket);
+    let transport = run(node, socket, None);
 
-    // warm up
-    sleep(Duration::from_secs(2));
+    sleep(Duration::from_secs(2)); // warm up
     mode.store(WorkloadMode::Benchmark as _, Ordering::SeqCst);
-
     sleep(Duration::from_secs(10));
+    mode.store(WorkloadMode::Discard as _, Ordering::SeqCst);
+    sleep(Duration::from_secs(2)); // cool down
+
     let node = transport.stop();
     let mut latencies = node.latencies;
 

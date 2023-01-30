@@ -1,6 +1,7 @@
 use std::{
     io::ErrorKind,
     net::UdpSocket,
+    ops::Range,
     panic::panic_any,
     sync::Arc,
     thread::{spawn, JoinHandle},
@@ -10,6 +11,10 @@ use std::{
 use bincode::Options;
 use crossbeam::channel::{self, Receiver, RecvTimeoutError, Sender};
 
+use nix::{
+    sched::{sched_setaffinity, CpuSet},
+    unistd::Pid,
+};
 use serde::{de::DeserializeOwned, Serialize};
 
 use crate::{NodeAddr, NodeEffect, NodeEvent, Protocol};
@@ -17,6 +22,7 @@ use crate::{NodeAddr, NodeEffect, NodeEvent, Protocol};
 pub struct TransportRun<N, M> {
     pub receive_thread: JoinHandle<()>,
     node_thread: JoinHandle<N>,
+    effect_threads: Vec<JoinHandle<()>>,
     channel: Sender<RunEvent<M>>,
 }
 
@@ -25,25 +31,63 @@ enum RunEvent<M> {
     Stop,
 }
 
-pub fn run<N, M>(node: N, socket: UdpSocket) -> TransportRun<N, M>
+pub fn run<N, M>(node: N, socket: UdpSocket, affinity: Option<Range<usize>>) -> TransportRun<N, M>
 where
     N: Send + 'static + Protocol<NodeEvent<M>, Effect = NodeEffect<M>>,
     M: Send + 'static + Serialize + DeserializeOwned,
 {
+    if let Some(affinity) = affinity.clone() {
+        assert!(affinity.len() >= 3);
+    }
+
     let socket = Arc::new(socket);
     let channel = channel::unbounded();
+    let effect_channel = channel::unbounded();
+
+    fn set_affinity(affinity: usize) {
+        let mut cpu_set = CpuSet::new();
+        cpu_set.set(affinity).unwrap();
+        sched_setaffinity(Pid::from_raw(0), &cpu_set).unwrap();
+    }
+
     let node_thread = spawn({
-        let socket = socket.clone();
-        move || run_node(node, channel.1, socket)
+        let affinity = affinity.clone();
+        move || {
+            if let Some(affinity) = affinity {
+                set_affinity(affinity.start);
+            }
+            run_node(node, channel.1, effect_channel.0)
+        }
     });
     let receive_thread = spawn({
+        let affinity = affinity.clone();
         let channel = channel.0.clone();
-        move || run_receive(channel, socket)
+        let socket = socket.clone();
+        move || {
+            if let Some(affinity) = affinity {
+                set_affinity(affinity.start + 1);
+            }
+            run_receive(channel, socket)
+        }
     });
+    let mut effect_threads = Vec::new();
+    if let Some(affinity) = affinity {
+        for i in affinity.start + 2..affinity.end {
+            let effect_channel = effect_channel.1.clone();
+            let socket = socket.clone();
+            effect_threads.push(spawn(move || {
+                set_affinity(i);
+                run_effect(effect_channel, socket)
+            }))
+        }
+    } else {
+        effect_threads.push(spawn(move || run_effect(effect_channel.1, socket)))
+    }
 
     TransportRun {
         receive_thread,
         node_thread,
+        effect_threads,
         channel: channel.0,
     }
 }
@@ -51,19 +95,24 @@ where
 impl<N, M> TransportRun<N, M> {
     pub fn stop(self) -> N {
         self.channel.send(RunEvent::Stop).unwrap();
-        self.node_thread.join().unwrap()
+        let node = self.node_thread.join().unwrap();
+        for thread in self.effect_threads {
+            thread.join().unwrap()
+        }
+        node
     }
 }
 
-fn run_node<N, M>(mut node: N, channel: Receiver<RunEvent<M>>, socket: Arc<UdpSocket>) -> N
+fn run_node<N, M>(
+    mut node: N,
+    channel: Receiver<RunEvent<M>>,
+    effect_channel: Sender<(NodeAddr, M)>,
+) -> N
 where
     N: Protocol<NodeEvent<M>, Effect = NodeEffect<M>>,
     M: Send + 'static + Serialize,
 {
-    let effect_channel = channel::unbounded();
-    let effect_thread = spawn(move || run_effect(effect_channel.1, socket));
-
-    perform_effect(node.init(), &effect_channel.0);
+    perform_effect(node.init(), &effect_channel);
     let mut deadline = Instant::now() + Duration::from_millis(10);
     loop {
         let effect;
@@ -76,7 +125,7 @@ where
             // currently disconnected should be unreachable
             Ok(RunEvent::Stop) | Err(RecvTimeoutError::Disconnected) => break,
         }
-        perform_effect(effect, &effect_channel.0);
+        perform_effect(effect, &effect_channel);
     }
 
     fn perform_effect<M>(effect: NodeEffect<M>, channel: &Sender<(NodeAddr, M)>) {
@@ -92,8 +141,6 @@ where
         }
     }
 
-    drop(effect_channel.0);
-    effect_thread.join().unwrap();
     node
 }
 
