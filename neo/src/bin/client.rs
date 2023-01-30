@@ -15,17 +15,18 @@ use std::{
 use dsys::{
     node::{Workload, WorkloadMode},
     udp::{run, TransportConfig},
-    unreplicated::Client,
     NodeAddr,
 };
+use neo::Client;
 use rand::random;
 
 fn main() {
     // create the result file first so if crash later file will keep empty
     let mut result = File::create("result.txt").unwrap();
 
-    let ip = args().nth(1).unwrap_or(String::from("localhost"));
-    let replica_ip = args().nth(2).unwrap_or(String::from("localhost"));
+    let f = args().nth(1).unwrap().parse().unwrap();
+    let ip = args().nth(2).unwrap_or(String::from("localhost"));
+    let multicast_ip = args().nth(3).unwrap_or(String::from("localhost"));
     let socket = UdpSocket::bind((ip, 0)).unwrap();
     let mode = Arc::new(AtomicU8::new(WorkloadMode::Discard as _));
     let node = Workload::new_benchmark(
@@ -33,12 +34,13 @@ fn main() {
             random(),
             NodeAddr::Socket(socket.local_addr().unwrap()),
             NodeAddr::Socket(
-                (replica_ip, 5000)
+                (multicast_ip, 5001)
                     .to_socket_addrs()
                     .unwrap()
                     .next()
                     .unwrap(),
             ),
+            f,
         ),
         repeat_with::<Box<[u8]>, _>(Default::default),
         mode.clone(),

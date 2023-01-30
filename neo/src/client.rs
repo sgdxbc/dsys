@@ -69,6 +69,7 @@ impl Protocol<Event> for Client {
                 // TODO properly check safety
                 if self.results.len() == 2 * self.f + 1 {
                     self.results.drain();
+                    self.op = None;
                     Effect::Notify(reply.result)
                 } else {
                     Effect::Nop

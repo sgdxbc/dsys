@@ -7,6 +7,7 @@ use dsys::Protocol;
 
 use crate::{Effect, Event, Message};
 
+#[derive(Default)]
 pub struct Sequencer {
     seq: u32,
 }
@@ -23,6 +24,7 @@ impl Protocol<Event> for Sequencer {
             return Effect::Nop
         };
         self.seq += 1;
+        multicast.seq = self.seq;
         let mut hasher = DefaultHasher::new();
         multicast.digest.hash(&mut hasher);
         multicast
