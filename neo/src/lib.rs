@@ -1,4 +1,5 @@
 pub mod client;
+pub mod seq;
 
 use dsys::{NodeAddr, NodeEvent, NodeEffect};
 use serde::{Deserialize, Serialize};

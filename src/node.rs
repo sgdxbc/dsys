@@ -31,6 +31,7 @@ pub enum NodeEffect<M> {
     Nop,
     Notify(Box<[u8]>),
     Send(NodeAddr, M),
+    Broadcast(M),
     Compose(Vec<NodeEffect<M>>),
 }
 

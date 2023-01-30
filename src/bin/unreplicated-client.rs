@@ -14,7 +14,7 @@ use std::{
 
 use dsys::{
     node::{Workload, WorkloadMode},
-    udp::run,
+    udp::{run, TransportConfig},
     unreplicated::Client,
     NodeAddr,
 };
@@ -44,7 +44,14 @@ fn main() {
         repeat_with::<Box<[u8]>, _>(Default::default),
         mode.clone(),
     );
-    let transport = run(node, socket, None);
+    let transport = run(
+        node,
+        TransportConfig {
+            socket,
+            affinity: None,
+            broadcast: Default::default(),
+        },
+    );
 
     sleep(Duration::from_secs(2)); // warm up
     mode.store(WorkloadMode::Benchmark as _, Ordering::SeqCst);

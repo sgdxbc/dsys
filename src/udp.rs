@@ -1,6 +1,6 @@
 use std::{
     io::ErrorKind,
-    net::UdpSocket,
+    net::{SocketAddr, UdpSocket},
     ops::Range,
     panic::panic_any,
     sync::Arc,
@@ -19,6 +19,12 @@ use serde::{de::DeserializeOwned, Serialize};
 
 use crate::{NodeAddr, NodeEffect, NodeEvent, Protocol};
 
+pub struct TransportConfig {
+    pub socket: UdpSocket,
+    pub affinity: Option<Range<usize>>,
+    pub broadcast: Box<[SocketAddr]>,
+}
+
 pub struct TransportRun<N, M> {
     pub receive_thread: JoinHandle<()>,
     node_thread: JoinHandle<N>,
@@ -36,16 +42,16 @@ enum EffectEvent<M> {
     Broadcast(M),
 }
 
-pub fn run<N, M>(node: N, socket: UdpSocket, affinity: Option<Range<usize>>) -> TransportRun<N, M>
+pub fn run<N, M>(node: N, config: TransportConfig) -> TransportRun<N, M>
 where
     N: Send + 'static + Protocol<NodeEvent<M>, Effect = NodeEffect<M>>,
     M: Send + 'static + Serialize + DeserializeOwned,
 {
-    if let Some(affinity) = affinity.clone() {
+    if let Some(affinity) = config.affinity.clone() {
         assert!(affinity.len() >= 3);
     }
 
-    let socket = Arc::new(socket);
+    let socket = Arc::new(config.socket);
     let channel = channel::unbounded();
     let effect_channel = channel::unbounded();
 
@@ -56,7 +62,7 @@ where
     }
 
     let node_thread = spawn({
-        let affinity = affinity.clone();
+        let affinity = config.affinity.clone();
         move || {
             if let Some(affinity) = affinity {
                 set_affinity(affinity.start);
@@ -65,7 +71,7 @@ where
         }
     });
     let receive_thread = spawn({
-        let affinity = affinity.clone();
+        let affinity = config.affinity.clone();
         let channel = channel.0.clone();
         let socket = socket.clone();
         move || {
@@ -76,17 +82,20 @@ where
         }
     });
     let mut effect_threads = Vec::new();
-    if let Some(affinity) = affinity {
+    if let Some(affinity) = config.affinity {
         for i in affinity.start + 2..affinity.end {
             let effect_channel = effect_channel.1.clone();
             let socket = socket.clone();
+            let broadcast = config.broadcast.clone();
             effect_threads.push(spawn(move || {
                 set_affinity(i);
-                run_effect(effect_channel, socket)
+                run_effect(effect_channel, socket, broadcast)
             }))
         }
     } else {
-        effect_threads.push(spawn(move || run_effect(effect_channel.1, socket)))
+        effect_threads.push(spawn(move || {
+            run_effect(effect_channel.1, socket, config.broadcast)
+        }))
     }
 
     TransportRun {
@@ -145,6 +154,9 @@ where
             NodeEffect::Send(destination, message) => channel
                 .send(EffectEvent::Send(destination, message))
                 .unwrap(),
+            NodeEffect::Broadcast(message) => {
+                channel.send(EffectEvent::Broadcast(message)).unwrap()
+            }
         }
     }
 
@@ -173,8 +185,11 @@ where
     }
 }
 
-fn run_effect<M>(channel: Receiver<EffectEvent<M>>, socket: Arc<UdpSocket>)
-where
+fn run_effect<M>(
+    channel: Receiver<EffectEvent<M>>,
+    socket: Arc<UdpSocket>,
+    broadcast: Box<[SocketAddr]>,
+) where
     M: Serialize,
 {
     while let Ok(event) = channel.recv() {
@@ -184,7 +199,12 @@ where
                 socket.send_to(&buf, addr).unwrap();
             }
             EffectEvent::Send(..) => unreachable!(),
-            EffectEvent::Broadcast(message) => todo!(),
+            EffectEvent::Broadcast(message) => {
+                let buf = bincode::options().serialize(&message).unwrap();
+                for &addr in &*broadcast {
+                    socket.send_to(&buf, addr).unwrap();
+                }
+            }
         }
     }
 }

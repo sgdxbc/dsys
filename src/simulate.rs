@@ -73,6 +73,7 @@ impl<N, M> Simulate<N, M> {
             NodeEffect::Nop => {}
             NodeEffect::Notify(_) => unreachable!(),
             NodeEffect::Send(address, message) => self.messages.push_back((address, message)),
+            NodeEffect::Broadcast(_) => todo!(),
         }
     }
 }
