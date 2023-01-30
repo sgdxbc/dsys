@@ -9,6 +9,6 @@ with open('addresses.txt') as addresses:
     for line in addresses:
         [role, address] = line.split()
         file_name = f'unreplicated-{role}'
-        task = RemoteHost(address).send_file(f'target/release/{file_name}', file_name)
+        task = RemoteHost(address).send_file(f'target/release/{file_name}', file_name, quiet=True)
         tasks.append(task)
 Parallel(tasks).start(wait=True)

@@ -6,22 +6,19 @@ use std::{
     net::{ToSocketAddrs, UdpSocket},
     sync::{
         atomic::{AtomicU8, Ordering},
-        mpsc, Arc,
+        Arc,
     },
-    thread::{sleep, spawn},
+    thread::sleep,
     time::Duration,
 };
 
 use dsys::{
     node::{Workload, WorkloadMode},
-    udp::Transport,
+    udp::run,
     unreplicated::Client,
     NodeAddr,
 };
-use nix::sys::{
-    pthread::{pthread_kill, pthread_self},
-    signal::Signal::SIGINT,
-};
+
 use rand::random;
 
 fn main() {
@@ -47,21 +44,14 @@ fn main() {
         repeat_with::<Box<[u8]>, _>(Default::default),
         mode.clone(),
     );
-    let pthread_channel = mpsc::sync_channel(1);
-    let transport_thread = spawn(move || {
-        pthread_channel.0.send(pthread_self()).unwrap();
-        let mut transport = Transport::new(node, socket);
-        transport.run();
-        transport.stop()
-    });
+    let transport = run(node, socket);
 
     // warm up
     sleep(Duration::from_secs(2));
     mode.store(WorkloadMode::Benchmark as _, Ordering::SeqCst);
 
     sleep(Duration::from_secs(10));
-    pthread_kill(pthread_channel.1.recv().unwrap(), SIGINT).unwrap();
-    let node = transport_thread.join().unwrap();
+    let node = transport.stop();
     let mut latencies = node.latencies;
 
     writeln!(result, "{}", latencies.len()).unwrap();

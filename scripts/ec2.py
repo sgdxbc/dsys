@@ -58,6 +58,7 @@ elif sys.argv[1:2] == ['terminate']:
     instances = ec2.instances.filter(Filters=[
         {'Name': 'instance-state-name', 'Values': ['running']},  # other states?
         {'Name': 'tag:role', 'Values': ['*']}])
+    print(instances)
     instances.terminate()
     for instance in instances:
         instance.wait_until_terminated()
