@@ -1,7 +1,12 @@
 pub mod client;
+pub mod replica;
 pub mod seq;
 
-use dsys::{NodeAddr, NodeEvent, NodeEffect};
+pub use client::Client;
+pub use replica::Replica;
+pub use seq::Sequencer;
+
+use dsys::{NodeAddr, NodeEffect, NodeEvent};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -26,7 +31,7 @@ pub struct Reply {
     request_num: u32,
     result: Box<[u8]>,
     replica_id: u8,
-    seq: u8,
+    seq: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

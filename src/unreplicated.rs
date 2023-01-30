@@ -103,7 +103,7 @@ impl Protocol<Event> for Client {
 }
 
 pub struct Replica {
-    op_number: u32,
+    op_num: u32,
     app: App,
     replies: HashMap<u32, Reply>,
 }
@@ -111,7 +111,7 @@ pub struct Replica {
 impl Replica {
     pub fn new(app: App) -> Self {
         Self {
-            op_number: 0,
+            op_num: 0,
             app,
             replies: Default::default(),
         }
@@ -138,7 +138,7 @@ impl Protocol<Event> for Replica {
             }
             _ => {}
         }
-        self.op_number += 1;
+        self.op_num += 1;
         let result = self.app.execute(&request.op);
         let reply = Reply {
             seq: request.seq,
