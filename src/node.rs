@@ -2,7 +2,7 @@ use std::{
     net::SocketAddr,
     ops::Add,
     sync::{
-        atomic::{AtomicU32, Ordering},
+        atomic::{AtomicU8, Ordering},
         Arc,
     },
     time::{Duration, Instant},
@@ -58,34 +58,43 @@ pub struct Workload<N, I> {
     node: N,
     ops: I,
     pub results: Vec<Box<[u8]>>,
-    benchmark: bool,
     instant: Instant,
     pub latencies: Vec<Duration>,
-    pub count: Arc<AtomicU32>,
+    pub mode: Arc<AtomicU8>,
+}
+
+pub enum WorkloadMode {
+    Discard,
+    Test,
+    Benchmark,
+}
+
+impl WorkloadMode {
+    const DISCARD: u8 = Self::Discard as _;
+    const TEST: u8 = Self::Test as _;
+    const BENCHMARK: u8 = Self::Benchmark as _;
 }
 
 impl<N, I> Workload<N, I> {
-    pub fn new(node: N, ops: I) -> Self {
+    pub fn new_test(node: N, ops: I) -> Self {
         Self {
             node,
             ops,
             results: Default::default(),
-            benchmark: false,
             instant: Instant::now(),
             latencies: Default::default(),
-            count: Default::default(),
+            mode: Arc::new(AtomicU8::new(WorkloadMode::Test as _)),
         }
     }
 
-    pub fn new_benchmark(node: N, ops: I, count: Arc<AtomicU32>) -> Self {
+    pub fn new_benchmark(node: N, ops: I, mode: Arc<AtomicU8>) -> Self {
         Self {
             node,
             ops,
             results: Default::default(),
             instant: Instant::now(),
-            benchmark: true,
             latencies: Default::default(),
-            count,
+            mode,
         }
     }
 
@@ -111,11 +120,11 @@ impl<N, I> Workload<N, I> {
     {
         match effect {
             NodeEffect::Notify(result) => {
-                if self.benchmark {
-                    self.latencies.push(Instant::now() - self.instant);
-                    self.count.fetch_add(1, Ordering::SeqCst);
-                } else {
-                    self.results.push(result);
+                match self.mode.load(Ordering::SeqCst) {
+                    WorkloadMode::DISCARD => {}
+                    WorkloadMode::TEST => self.results.push(result),
+                    WorkloadMode::BENCHMARK => self.latencies.push(Instant::now() - self.instant),
+                    _ => unreachable!(),
                 }
                 // TODO able to throttle
                 self.work()

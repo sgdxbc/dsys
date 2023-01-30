@@ -167,7 +167,7 @@ mod tests {
         let mut simulate = Simulate::<_, Message>::default();
         simulate.nodes.insert(
             TestClient(0),
-            Multiplex::A(Workload::new(
+            Multiplex::A(Workload::new_test(
                 Client::new(0, TestClient(0), TestReplica(0)),
                 [b"hello".to_vec()].into_iter(),
             )),
