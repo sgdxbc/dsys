@@ -22,7 +22,7 @@ pub struct Replica {
 pub struct LogEntry {
     request: Request,
     seq: u32,
-    signature: [u8; 4],
+    signature: [u32; 16],
 }
 
 impl Replica {
@@ -79,7 +79,7 @@ impl Replica {
             let digest = <[u8; 32]>::from(sha2::Sha256::digest(&multicast.payload));
             let mut hasher = DefaultHasher::new();
             digest.hash(&mut hasher);
-            &hasher.finish().to_le_bytes()[..4] == &multicast.signature
+            hasher.finish().to_le() as u32 == multicast.signature[0] //
         };
         if !verified {
             println!("malformed");

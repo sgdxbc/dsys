@@ -27,9 +27,7 @@ impl Protocol<Event> for Sequencer {
         multicast.seq = self.seq;
         let mut hasher = DefaultHasher::new();
         multicast.digest.hash(&mut hasher);
-        multicast
-            .signature
-            .copy_from_slice(&hasher.finish().to_le_bytes()[..4]);
+        multicast.signature[0] = hasher.finish().to_le() as _;
         Effect::Broadcast(Message::Request(multicast))
     }
 }

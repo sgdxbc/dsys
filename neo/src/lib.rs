@@ -20,7 +20,7 @@ pub struct Request {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Multicast {
     seq: u32,
-    signature: [u8; 4],
+    signature: [u32; 16],
     digest: [u8; 32],
     payload: Box<[u8]>,
 }
