@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
 import sys
+import botocore
 import boto3
-from pyrem.host import RemoteHost
-from pyrem.task import Parallel
 
+
+# 172.31.16.0/24
+# subnet = 'subnet-099a59c8b291beba1'
+# 172.31.0.0/24
+subnet = 'subnet-008ff4a08e63a0794'
 
 def params_replica(i):
     assert i < 254
     ip = f'172.31.1.{i + 1}'
     return {
-        'SubnetId': 'subnet-008ff4a08e63a0794',
+        'SubnetId': subnet,
         'PrivateIpAddress': ip,
         'ImageId': 'ami-0bc44b8dc7cae9c34',
         'InstanceType': 'm5.2xlarge',
@@ -21,7 +25,7 @@ def params_client(i):
     assert i < 1024
     ip = f'172.31.{2 + i // 254}.{1 + i % 254}'
     return {
-        'SubnetId': 'subnet-008ff4a08e63a0794',
+        'SubnetId': subnet,
         'PrivateIpAddress': ip,
         'ImageId': 'ami-0bc44b8dc7cae9c34',
         'InstanceType': 't3.micro',
@@ -33,33 +37,48 @@ def params_seq(i):
     assert i == 0
     ip = '172.31.0.4'
     return {
-        'SubnetId': 'subnet-008ff4a08e63a0794',
+        'SubnetId': subnet,
         'PrivateIpAddress': ip,
         'ImageId': 'ami-0bc44b8dc7cae9c34',
-        'InstanceType': 'c6i.16xlarge',
+        'InstanceType': 'm5.2xlarge',
         'KeyName': 'Ephemeral',        
     }
 
 
 params = {
+    'seq': params_seq,
     'replica': params_replica,
     'client': params_client,
 }
 ec2 = boto3.resource('ec2', region_name='ap-east-1')
 
-if sys.argv[1:2] == ['launch']:
+def launch(args, dry):
     instances = []
     addresses = ''
-    for arg in sys.argv[2:]:
+    for arg in args:
         [role, count] = arg.split('=')
         for i in range(int(count)):
-            instance = ec2.create_instances(
-                **params[role](i), 
-                MinCount=1, MaxCount=1, 
-                TagSpecifications=[{'ResourceType': 'instance', 'Tags': [{'Key': 'role', 'Value': role}]}],
-            )[0]
-            instances.append(instance)
-            addresses += f'{role:12}{instance.private_ip_address}\n'
+            try:
+                instance = ec2.create_instances(
+                    **params[role](i), 
+                    MinCount=1, MaxCount=1, 
+                    TagSpecifications=[{'ResourceType': 'instance', 'Tags': [{'Key': 'role', 'Value': role}]}],
+                    DryRun=dry,
+                )[0]
+                instances.append(instance)
+                addresses += f'{role:12}{instance.private_ip_address}\n'
+
+            except botocore.exceptions.ClientError as err:
+                if err.response['Error']['Code'] != 'DryRunOperation':
+                    raise
+    return instances, addresses
+
+
+if sys.argv[1:2] == ['launch']:
+    launch(sys.argv[2:], True)
+    print('Dry run finish')
+    instances, addresses = launch(sys.argv[2:], False)
+    print('Finish')
     for instance in instances:
         instance.wait_until_running()
         print('.', end='', flush=True)

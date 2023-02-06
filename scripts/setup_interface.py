@@ -13,6 +13,7 @@ with open('addresses.txt') as addresses:
         task = Sequential([
             RemoteHost(address).run(['sudo', 'ethtool', '-L', interface, 'combined', '1']),
             RemoteHost(address).run(['echo', f'IRQBALANCE_BANNED_CPULIST=0-{n - 2}', '|', 'sudo', 'tee', '/etc/default/irqbalance']),
-            RemoteHost(address).run(['sudo', 'service', 'irqbalance', 'restart'])])
+            RemoteHost(address).run(['sudo', 'service', 'irqbalance', 'restart']),
+            RemoteHost(address).run(['sudo', 'sysctl', f'net.ipv4.conf.{interface}.force_igmp_version=2'])])
         tasks.append(task)
 Parallel(tasks).start(wait=True)

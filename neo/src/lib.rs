@@ -18,7 +18,6 @@ pub struct Request {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[repr(C)]
 pub struct Multicast {
     seq: u32,
     signature: [u8; 4],
