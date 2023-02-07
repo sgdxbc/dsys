@@ -1,5 +1,6 @@
 use std::{
     io::ErrorKind,
+    marker::PhantomData,
     net::{SocketAddr, UdpSocket},
     ops::Range,
     panic::panic_any,
@@ -203,6 +204,65 @@ fn run_effect<M>(
                 let buf = bincode::options().serialize(&message).unwrap();
                 for &addr in &*broadcast {
                     socket.send_to(&buf, addr).unwrap();
+                }
+            }
+        }
+    }
+}
+
+pub struct NodeTx<M>(PhantomData<M>);
+
+impl<M> Protocol<NodeEffect<M>> for NodeTx<M>
+where
+    M: Serialize,
+{
+    type Effect = TxEvent;
+
+    fn init(&mut self) -> Self::Effect {
+        TxEvent::Nop
+    }
+
+    fn update(&mut self, event: NodeEffect<M>) -> Self::Effect {
+        match event {
+            NodeEffect::Nop => TxEvent::Nop,
+            NodeEffect::Send(NodeAddr::Socket(addr), message) => {
+                let buf = bincode::options().serialize(&message).unwrap().into();
+                TxEvent::Send(addr, buf)
+            }
+            NodeEffect::Broadcast(message) => {
+                let buf = bincode::options().serialize(&message).unwrap().into();
+                TxEvent::Broadcast(buf)
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+pub struct Tx {
+    socket: Arc<UdpSocket>,
+    broadcast: Box<[SocketAddr]>,
+}
+
+pub enum TxEvent {
+    Nop,
+    Send(SocketAddr, Box<[u8]>),
+    Broadcast(Box<[u8]>),
+}
+
+impl Protocol<TxEvent> for Tx {
+    type Effect = ();
+
+    fn init(&mut self) -> Self::Effect {}
+
+    fn update(&mut self, event: TxEvent) -> Self::Effect {
+        match event {
+            TxEvent::Nop => {}
+            TxEvent::Send(addr, buf) => {
+                self.socket.send_to(&buf, addr).unwrap();
+            }
+            TxEvent::Broadcast(buf) => {
+                for &addr in &*self.broadcast {
+                    self.socket.send_to(&buf, addr).unwrap();
                 }
             }
         }

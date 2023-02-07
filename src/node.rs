@@ -1,4 +1,5 @@
 use std::{
+    mem::replace,
     net::SocketAddr,
     ops::Add,
     sync::{
@@ -10,7 +11,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::Protocol;
+use crate::{protocol::ComposeEffect, Protocol};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum NodeAddr {
@@ -39,6 +40,16 @@ impl<M> Add for NodeEffect<M> {
     type Output = Self;
 
     fn add(self, other: Self) -> Self::Output {
+        self.compose(other)
+    }
+}
+
+impl<M> ComposeEffect for NodeEffect<M> {
+    fn unit() -> Self {
+        Self::Nop
+    }
+
+    fn compose(self, other: Self) -> Self {
         match (self, other) {
             (Self::Nop, Self::Nop) => Self::Nop,
             (Self::Nop, effect) | (effect, Self::Nop) => effect,
@@ -51,6 +62,14 @@ impl<M> Add for NodeEffect<M> {
                 Self::Compose(effects)
             }
             (effect, other_effect) => Self::Compose(vec![effect, other_effect]),
+        }
+    }
+
+    fn decompose(&mut self) -> Option<Self> {
+        match self {
+            Self::Nop => None,
+            Self::Compose(effects) if effects.len() > 1 => Some(effects.pop().unwrap()),
+            _ => Some(replace(self, Self::Nop)),
         }
     }
 }
