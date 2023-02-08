@@ -22,7 +22,7 @@ use nix::{
 };
 use serde::{de::DeserializeOwned, Serialize};
 
-use crate::{NodeAddr, NodeEffect, NodeEvent, Protocol};
+use crate::{set_affinity, NodeAddr, NodeEffect, NodeEvent, Protocol};
 
 pub struct TransportConfig {
     pub socket: UdpSocket,
@@ -131,7 +131,7 @@ where
     N: Protocol<NodeEvent<M>, Effect = NodeEffect<M>>,
     M: Send + 'static + Serialize,
 {
-    // perform_effect(node.init(), &effect_channel);
+    perform_effect(node.update(NodeEvent::Init), &effect_channel);
     let mut deadline = Instant::now() + Duration::from_millis(10);
     loop {
         let effect;
@@ -214,10 +214,16 @@ fn run_effect<M>(
 }
 
 pub enum RxEvent {
-    Handle(Box<[u8]>),
+    Receive(Box<[u8]>),
 }
 
 pub struct NodeRx<M>(PhantomData<M>);
+
+impl<M> Default for NodeRx<M> {
+    fn default() -> Self {
+        Self(Default::default())
+    }
+}
 
 impl<M> Protocol<RxEvent> for NodeRx<M>
 where
@@ -226,7 +232,7 @@ where
     type Effect = NodeEvent<M>;
 
     fn update(&mut self, event: RxEvent) -> Self::Effect {
-        let RxEvent::Handle(buf) = event;
+        let RxEvent::Receive(buf) = event;
         let message = bincode::options()
             .allow_trailing_bytes()
             .deserialize(&buf)
@@ -235,12 +241,20 @@ where
     }
 }
 
-pub fn spawn_rx(socket: Arc<UdpSocket>) -> (JoinHandle<()>, channel::Receiver<RxEvent>) {
+pub fn spawn_rx<P>(
+    socket: Arc<UdpSocket>,
+    affinity: Option<usize>,
+    mut protocol: P,
+    channel: channel::Sender<P::Effect>,
+) -> JoinHandle<P>
+where
+    P: Protocol<RxEvent> + Send + 'static,
+    P::Effect: Send + 'static,
+{
     socket.set_nonblocking(true).unwrap();
 
-    let channel = channel::unbounded();
-    let handle = spawn(move || {
-        // TODO affinity
+    spawn(move || {
+        set_affinity(affinity);
 
         let mut buf = [0; 1500];
         let sigmask = SigSet::from_iter([SIGINT].into_iter());
@@ -255,16 +269,15 @@ pub fn spawn_rx(socket: Arc<UdpSocket>) -> (JoinHandle<()>, channel::Receiver<Rx
                 Err(err) => panic_any(err),
                 Ok(_) => {
                     while let Ok((len, _)) = socket.recv_from(&mut buf) {
-                        channel
-                            .0
-                            .send(RxEvent::Handle(buf[..len].to_vec().into()))
-                            .unwrap()
+                        let effect = protocol.update(RxEvent::Receive(buf[..len].to_vec().into()));
+                        channel.send(effect).unwrap()
                     }
                 }
             }
         }
-    });
-    (handle, channel.1)
+
+        protocol
+    })
 }
 
 pub enum TxEvent {
@@ -273,8 +286,13 @@ pub enum TxEvent {
     Broadcast(Box<[u8]>),
 }
 
-#[derive(Default)]
 pub struct NodeTx<M>(PhantomData<M>);
+
+impl<M> Default for NodeTx<M> {
+    fn default() -> Self {
+        Self(Default::default())
+    }
+}
 
 impl<M> Protocol<NodeEffect<M>> for NodeTx<M>
 where
@@ -301,6 +319,17 @@ where
 pub struct Tx {
     socket: Arc<UdpSocket>,
     broadcast: Box<[SocketAddr]>,
+}
+
+impl Tx {
+    pub fn new(socket: Arc<UdpSocket>) -> Self {
+        Self {
+            socket,
+            broadcast: Default::default(),
+        }
+    }
+
+    //
 }
 
 impl Protocol<TxEvent> for Tx {

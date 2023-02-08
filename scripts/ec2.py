@@ -75,8 +75,9 @@ def launch(args, dry):
 
 
 if sys.argv[1:2] == ['launch']:
-    launch(sys.argv[2:], True)
-    print('Dry run finish')
+    # dry run is not very useful because we launch instances one by one
+    # launch(sys.argv[2:], True)
+    # print('Dry run finish')
     instances, addresses = launch(sys.argv[2:], False)
     print('Finish')
     for instance in instances:

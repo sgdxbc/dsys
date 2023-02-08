@@ -1,15 +1,21 @@
 use std::thread::JoinHandle;
 
 use crossbeam::channel;
-use nix::{
-    sched::{sched_setaffinity, CpuSet},
-    unistd::Pid,
-};
+
+use crate::set_affinity;
 
 pub trait Protocol<Event> {
     type Effect;
 
     fn update(&mut self, event: Event) -> Self::Effect;
+
+    fn then<P>(self, other: P) -> Then<Self, P>
+    where
+        Self: Sized,
+        P: Protocol<Self::Effect>,
+    {
+        Then(self, other)
+    }
 }
 
 pub trait Init {
@@ -35,36 +41,31 @@ impl Composite for () {
 pub fn spawn<P, E>(
     protocols: Box<[P]>,
     affinity: Option<usize>,
-) -> (
-    Box<[JoinHandle<P>]>,
-    channel::Sender<E>,
-    channel::Receiver<P::Effect>,
-)
+    event_channel: channel::Receiver<E>,
+    effect_channel: Option<channel::Sender<P::Effect>>,
+) -> Box<[JoinHandle<P>]>
 where
     P: Protocol<E> + Send + 'static,
     E: Send + 'static,
     P::Effect: Send + 'static,
 {
-    let event_channel = channel::unbounded();
-    let effect_channel = channel::unbounded();
     let mut handles = Vec::new();
     for (i, mut protocol) in Vec::from(protocols).into_iter().enumerate() {
-        let event_channel = event_channel.1.clone();
-        let effect_channel = effect_channel.0.clone();
+        let event_channel = event_channel.clone();
+        let effect_channel = effect_channel.clone();
         let handle = std::thread::spawn(move || {
-            if let Some(affinity) = affinity {
-                let mut cpu_set = CpuSet::new();
-                cpu_set.set(affinity + i).unwrap();
-                sched_setaffinity(Pid::from_raw(0), &cpu_set).unwrap();
-            }
+            set_affinity(affinity.map(|n| n + i));
             for event in event_channel.iter() {
-                effect_channel.send(protocol.update(event)).unwrap(); //
+                let effect = protocol.update(event);
+                if let Some(effect_channel) = &effect_channel {
+                    effect_channel.send(effect).unwrap(); //
+                }
             }
             protocol
         });
         handles.push(handle);
     }
-    (handles.into(), event_channel.0, effect_channel.1)
+    handles.into()
 }
 
 pub enum Multiplex<A, B> {
