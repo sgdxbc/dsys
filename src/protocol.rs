@@ -12,6 +12,14 @@ pub trait Protocol<Event> {
     {
         Then(self, other)
     }
+
+    fn each_then<P>(self, other: P) -> EachThen<Self, P>
+    where
+        Self: Sized,
+        P: Protocol<Self::Effect>,
+    {
+        EachThen(self, other)
+    }
 }
 
 pub trait Composite: Sized {
@@ -117,5 +125,26 @@ where
 
     fn update(&mut self, event: E) -> Self::Effect {
         self.1.update(self.0.update(event))
+    }
+}
+
+pub struct EachThen<A, B>(A, B);
+
+impl<A, B, E> Protocol<E> for EachThen<A, B>
+where
+    A: Protocol<E>,
+    B: Protocol<A::Effect>,
+    A::Effect: Composite,
+    B::Effect: Composite,
+{
+    type Effect = B::Effect;
+
+    fn update(&mut self, event: E) -> Self::Effect {
+        let mut effect_a = self.0.update(event);
+        let mut effect_b = B::Effect::NOP;
+        while let Some(basic_effect) = effect_a.decompose() {
+            effect_b = effect_b.compose(self.1.update(basic_effect));
+        }
+        effect_b
     }
 }

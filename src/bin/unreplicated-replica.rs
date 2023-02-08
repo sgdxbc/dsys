@@ -6,7 +6,14 @@ use std::{
 };
 
 use crossbeam::channel;
-use dsys::{app, node::Lifecycle, protocol::Generate, udp, unreplicated::Replica, App, Protocol};
+use dsys::{
+    app,
+    node::Lifecycle,
+    protocol::{Generate, Identity},
+    udp,
+    unreplicated::Replica,
+    App, Protocol,
+};
 use nix::{
     sched::{sched_setaffinity, CpuSet},
     unistd::Pid,
@@ -42,7 +49,8 @@ fn main() {
         let socket = socket.clone();
         let _tx = spawn(move || {
             set_affinity(i);
-            effect_channel.deploy(&mut udp::NodeTx::default().then(udp::Tx::new(socket)))
+            effect_channel
+                .deploy(&mut Identity.each_then(udp::NodeTx::default().then(udp::Tx::new(socket))))
         });
     }
 

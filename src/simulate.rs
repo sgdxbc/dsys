@@ -1,6 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 
-use crate::{NodeAddr, NodeEffect, NodeEvent, Protocol};
+use crate::{protocol::Composite, NodeAddr, NodeEffect, NodeEvent, Protocol};
 
 pub enum Progress {
     DeliverMessage,
@@ -63,16 +63,13 @@ impl<N, M> Simulate<N, M> {
         self.push_effect(effect);
     }
 
-    fn push_effect(&mut self, effect: NodeEffect<M>) {
-        match effect {
-            NodeEffect::Compose(effects) => {
-                for effect in effects {
-                    self.push_effect(effect)
-                }
+    fn push_effect(&mut self, mut effect: NodeEffect<M>) {
+        while let Some(basic_effect) = effect.decompose() {
+            match basic_effect {
+                NodeEffect::Send(address, message) => self.messages.push_back((address, message)),
+                NodeEffect::Broadcast(_) => todo!(),
+                _ => unreachable!(),
             }
-            NodeEffect::Nop => {}
-            NodeEffect::Send(address, message) => self.messages.push_back((address, message)),
-            NodeEffect::Broadcast(_) => todo!(),
         }
     }
 }

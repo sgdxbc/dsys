@@ -61,6 +61,12 @@ impl<M> Composite for NodeEffect<M> {
         match self {
             Self::Nop => None,
             Self::Compose(effects) if effects.len() > 1 => Some(effects.pop().unwrap()),
+            Self::Compose(effects) => {
+                // any better way?
+                let effect = effects.pop().unwrap();
+                drop(replace(self, Self::Nop));
+                Some(effect)
+            }
             _ => Some(replace(self, Self::Nop)),
         }
     }

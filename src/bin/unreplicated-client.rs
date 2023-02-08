@@ -55,9 +55,7 @@ fn main() {
         let event_channel = event_channel.1.clone();
         move || {
             Lifecycle::new(event_channel, running).deploy(
-                &mut (&mut node)
-                    .then(udp::NodeTx::default())
-                    .then(udp::Tx::new(socket)),
+                &mut (&mut node).each_then(udp::NodeTx::default().then(udp::Tx::new(socket))),
             );
             node
         }
