@@ -18,10 +18,6 @@ pub trait Protocol<Event> {
     }
 }
 
-pub trait Init {
-    const INIT: Self;
-}
-
 pub trait Composite: Sized {
     const NOP: Self;
     fn compose(self, other: Self) -> Self;
@@ -35,6 +31,29 @@ impl Composite for () {
 
     fn decompose(&mut self) -> Option<Self> {
         None
+    }
+}
+
+pub trait Generate {
+    type Event;
+
+    fn deploy<P>(&mut self, protocol: &mut P, channel: Option<channel::Sender<P::Effect>>)
+    where
+        P: Protocol<Self::Event>;
+}
+
+impl<E> Generate for channel::Receiver<E> {
+    type Event = E;
+
+    fn deploy<P>(&mut self, protocol: &mut P, channel: Option<channel::Sender<P::Effect>>)
+    where
+        P: Protocol<Self::Event>,
+    {
+        for event in self.iter() {
+            if let Some(channel) = &channel {
+                channel.send(protocol.update(event)).unwrap()
+            }
+        }
     }
 }
 
@@ -94,7 +113,6 @@ impl<A, B, E> Protocol<E> for Then<A, B>
 where
     A: Protocol<E>,
     B: Protocol<A::Effect>,
-    B::Effect: Composite,
 {
     type Effect = B::Effect;
 

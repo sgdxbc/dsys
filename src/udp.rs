@@ -22,7 +22,7 @@ use nix::{
 };
 use serde::{de::DeserializeOwned, Serialize};
 
-use crate::{set_affinity, NodeAddr, NodeEffect, NodeEvent, Protocol};
+use crate::{protocol::Generate, set_affinity, NodeAddr, NodeEffect, NodeEvent, Protocol};
 
 pub struct TransportConfig {
     pub socket: UdpSocket,
@@ -238,6 +238,36 @@ where
             .deserialize(&buf)
             .unwrap();
         NodeEvent::Handle(message)
+    }
+}
+
+pub struct Rx(pub Arc<UdpSocket>);
+
+impl Generate for Rx {
+    type Event = RxEvent;
+
+    fn deploy<P>(&mut self, protocol: &mut P, channel: Option<channel::Sender<P::Effect>>)
+    where
+        P: Protocol<Self::Event>,
+    {
+        let channel = channel.unwrap();
+        let mut buf = [0; 1500];
+        let poll_fd = PollFd::new(self.0.as_raw_fd(), PollFlags::POLLIN);
+        let sigmask = SigSet::from_iter([SIGINT].into_iter());
+        // can have exit condition
+        loop {
+            match ppoll(&mut [poll_fd], None, Some(sigmask)) {
+                Err(Errno::EINTR) => break,
+                Err(err) => panic_any(err),
+                Ok(_) => {
+                    while let Ok((len, _)) = self.0.recv_from(&mut buf) {
+                        channel
+                            .send(protocol.update(RxEvent::Receive(buf[..len].to_vec().into())))
+                            .unwrap()
+                    }
+                }
+            }
+        }
     }
 }
 

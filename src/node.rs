@@ -1,7 +1,6 @@
 use std::{
     mem::replace,
     net::SocketAddr,
-    ops::Add,
     sync::{
         atomic::{AtomicU8, Ordering},
         Arc,
@@ -14,7 +13,7 @@ use crossbeam::channel;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    protocol::{Composite, Init},
+    protocol::{Composite, Generate},
     set_affinity, Protocol,
 };
 
@@ -32,24 +31,12 @@ pub enum NodeEvent<M> {
     Tick,
 }
 
-impl<M> Init for NodeEvent<M> {
-    const INIT: Self = Self::Init;
-}
-
 #[derive(Debug)]
 pub enum NodeEffect<M> {
     Nop,
     Send(NodeAddr, M),
     Broadcast(M),
     Compose(Vec<NodeEffect<M>>),
-}
-
-impl<M> Add for NodeEffect<M> {
-    type Output = Self;
-
-    fn add(self, other: Self) -> Self::Output {
-        self.compose(other)
-    }
 }
 
 impl<M> Composite for NodeEffect<M> {
@@ -108,6 +95,40 @@ impl<M> Composite for ClientEffect<M> {
         match self {
             Self::Result(_) => Some(replace(self, Self::Node(NodeEffect::Nop))),
             Self::Node(effect) => effect.decompose().map(Self::Node),
+        }
+    }
+}
+
+pub struct Lifecycle<M> {
+    event_channel: channel::Receiver<NodeEvent<M>>,
+}
+
+impl<M> Lifecycle<M> {
+    pub fn new(event_channel: channel::Receiver<NodeEvent<M>>) -> Self {
+        Self { event_channel }
+    }
+}
+
+impl<M> Generate for Lifecycle<M> {
+    type Event = NodeEvent<M>;
+
+    fn deploy<P>(&mut self, node: &mut P, channel: Option<channel::Sender<P::Effect>>)
+    where
+        P: Protocol<Self::Event>,
+    {
+        let channel = channel.unwrap();
+        let effect = node.update(NodeEvent::Init);
+        channel.send(effect).unwrap();
+        let mut deadline = Instant::now() + Duration::from_millis(10);
+        loop {
+            match self.event_channel.recv_deadline(deadline) {
+                Ok(event) => channel.send(node.update(event)).unwrap(),
+                Err(channel::RecvTimeoutError::Disconnected) => break,
+                Err(channel::RecvTimeoutError::Timeout) => {
+                    deadline = Instant::now() + Duration::from_millis(10);
+                    channel.send(node.update(NodeEvent::Tick)).unwrap()
+                }
+            }
         }
     }
 }
