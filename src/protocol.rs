@@ -9,14 +9,27 @@ use nix::{
 pub trait Protocol<Event> {
     type Effect;
 
-    fn init(&mut self) -> Self::Effect;
     fn update(&mut self, event: Event) -> Self::Effect;
 }
 
-pub trait ComposeEffect: Sized {
-    fn unit() -> Self;
+pub trait Init {
+    const INIT: Self;
+}
+
+pub trait Composite: Sized {
+    const NOP: Self;
     fn compose(self, other: Self) -> Self;
     fn decompose(&mut self) -> Option<Self>;
+}
+
+impl Composite for () {
+    const NOP: Self = ();
+
+    fn compose(self, _: Self) -> Self {}
+
+    fn decompose(&mut self) -> Option<Self> {
+        None
+    }
 }
 
 pub fn spawn<P, E>(
@@ -66,13 +79,6 @@ where
 {
     type Effect = A::Effect;
 
-    fn init(&mut self) -> Self::Effect {
-        match self {
-            Multiplex::A(protocol) => protocol.init(),
-            Multiplex::B(protocol) => protocol.init(),
-        }
-    }
-
     fn update(&mut self, event: E) -> Self::Effect {
         match self {
             Multiplex::A(protocol) => protocol.update(event),
@@ -87,14 +93,9 @@ impl<A, B, E> Protocol<E> for Then<A, B>
 where
     A: Protocol<E>,
     B: Protocol<A::Effect>,
-    B::Effect: ComposeEffect,
+    B::Effect: Composite,
 {
     type Effect = B::Effect;
-
-    fn init(&mut self) -> Self::Effect {
-        let effect_a = self.0.init();
-        self.1.init().compose(self.1.update(effect_a))
-    }
 
     fn update(&mut self, event: E) -> Self::Effect {
         self.1.update(self.0.update(event))

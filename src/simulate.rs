@@ -31,7 +31,7 @@ impl<N, M> Simulate<N, M> {
         for effect in self
             .nodes
             .values_mut()
-            .map(|node| node.init())
+            .map(|node| node.update(NodeEvent::Init))
             .collect::<Vec<_>>()
         {
             self.push_effect(effect)
@@ -71,7 +71,6 @@ impl<N, M> Simulate<N, M> {
                 }
             }
             NodeEffect::Nop => {}
-            NodeEffect::Notify(_) => unreachable!(),
             NodeEffect::Send(address, message) => self.messages.push_back((address, message)),
             NodeEffect::Broadcast(_) => todo!(),
         }

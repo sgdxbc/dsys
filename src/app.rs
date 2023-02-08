@@ -17,10 +17,6 @@ impl App {
 impl Protocol<&'_ [u8]> for App {
     type Effect = Box<[u8]>;
 
-    fn init(&mut self) -> Self::Effect {
-        unreachable!()
-    }
-
     fn update(&mut self, event: &'_ [u8]) -> Self::Effect {
         self.execute(event)
     }

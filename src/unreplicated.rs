@@ -2,7 +2,12 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{app::App, NodeAddr, Protocol};
+use crate::{
+    app::App,
+    node::{ClientEffect, ClientEvent},
+    protocol::Composite,
+    NodeAddr, NodeEffect, NodeEvent, Protocol,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Request {
@@ -23,9 +28,6 @@ pub enum Message {
     Request(Request),
     Reply(Reply),
 }
-
-type Event = crate::NodeEvent<Message>;
-type Effect = crate::NodeEffect<Message>;
 
 pub struct Client {
     id: u32,
@@ -49,16 +51,12 @@ impl Client {
     }
 }
 
-impl Protocol<Event> for Client {
-    type Effect = Effect;
+impl Protocol<ClientEvent<Message>> for Client {
+    type Effect = ClientEffect<Message>;
 
-    fn init(&mut self) -> Self::Effect {
-        Effect::Nop
-    }
-
-    fn update(&mut self, event: Event) -> Self::Effect {
+    fn update(&mut self, event: ClientEvent<Message>) -> Self::Effect {
         match event {
-            Event::Op(op) => {
+            ClientEvent::Op(op) => {
                 assert!(self.op.is_none());
                 self.op = Some(op.clone());
                 self.seq += 1;
@@ -69,15 +67,19 @@ impl Protocol<Event> for Client {
                     seq: self.seq,
                     op,
                 };
-                Effect::Send(self.replica_addr, Message::Request(request))
+                ClientEffect::Node(NodeEffect::Send(
+                    self.replica_addr,
+                    Message::Request(request),
+                ))
             }
-            Event::Tick => {
+            ClientEvent::Node(NodeEvent::Init) => ClientEffect::NOP,
+            ClientEvent::Node(NodeEvent::Tick) => {
                 let Some(op) = &self.op else {
-                    return Effect::Nop
+                    return ClientEffect::NOP;
                 };
                 self.ticked += 1;
                 if self.ticked == 1 {
-                    return Effect::Nop;
+                    return ClientEffect::NOP;
                 }
                 if self.ticked == 2 {
                     println!("resend");
@@ -88,14 +90,17 @@ impl Protocol<Event> for Client {
                     seq: self.seq,
                     op: op.clone(),
                 };
-                Effect::Send(self.replica_addr, Message::Request(request))
+                ClientEffect::Node(NodeEffect::Send(
+                    self.replica_addr,
+                    Message::Request(request),
+                ))
             }
-            Event::Handle(Message::Reply(reply)) => {
+            ClientEvent::Node(NodeEvent::Handle(Message::Reply(reply))) => {
                 if self.op.is_none() || reply.seq != self.seq {
-                    return Effect::Nop;
+                    return ClientEffect::NOP;
                 }
                 self.op = None;
-                Effect::Notify(reply.result)
+                ClientEffect::Result(reply.result)
             }
             _ => unreachable!(),
         }
@@ -118,23 +123,19 @@ impl Replica {
     }
 }
 
-impl Protocol<Event> for Replica {
-    type Effect = Effect;
+impl Protocol<NodeEvent<Message>> for Replica {
+    type Effect = NodeEffect<Message>;
 
-    fn init(&mut self) -> Self::Effect {
-        Effect::Nop
-    }
-
-    fn update(&mut self, event: Event) -> Self::Effect {
+    fn update(&mut self, event: NodeEvent<Message>) -> Self::Effect {
         let request = match event {
-            Event::Handle(Message::Request(request)) => request,
-            Event::Tick => return Effect::Nop,
+            NodeEvent::Handle(Message::Request(request)) => request,
+            NodeEvent::Init | NodeEvent::Tick => return NodeEffect::NOP,
             _ => unreachable!(),
         };
         match self.replies.get(&request.client_id) {
-            Some(reply) if reply.seq > request.seq => return Effect::Nop,
+            Some(reply) if reply.seq > request.seq => return NodeEffect::NOP,
             Some(reply) if reply.seq == request.seq => {
-                return Effect::Send(request.client_addr, Message::Reply(reply.clone()))
+                return NodeEffect::Send(request.client_addr, Message::Reply(reply.clone()))
             }
             _ => {}
         }
@@ -145,7 +146,7 @@ impl Protocol<Event> for Replica {
             result,
         };
         self.replies.insert(request.client_id, reply.clone());
-        Effect::Send(request.client_addr, Message::Reply(reply))
+        NodeEffect::Send(request.client_addr, Message::Reply(reply))
     }
 }
 

@@ -11,7 +11,10 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::{protocol::ComposeEffect, Protocol};
+use crate::{
+    protocol::{Composite, Init},
+    Protocol,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum NodeAddr {
@@ -22,15 +25,18 @@ pub enum NodeAddr {
 
 #[derive(Debug)]
 pub enum NodeEvent<M> {
+    Init,
     Handle(M),
-    Op(Box<[u8]>),
     Tick,
+}
+
+impl<M> Init for NodeEvent<M> {
+    const INIT: Self = Self::Init;
 }
 
 #[derive(Debug)]
 pub enum NodeEffect<M> {
     Nop,
-    Notify(Box<[u8]>),
     Send(NodeAddr, M),
     Broadcast(M),
     Compose(Vec<NodeEffect<M>>),
@@ -44,10 +50,8 @@ impl<M> Add for NodeEffect<M> {
     }
 }
 
-impl<M> ComposeEffect for NodeEffect<M> {
-    fn unit() -> Self {
-        Self::Nop
-    }
+impl<M> Composite for NodeEffect<M> {
+    const NOP: Self = Self::Nop;
 
     fn compose(self, other: Self) -> Self {
         match (self, other) {
@@ -70,6 +74,38 @@ impl<M> ComposeEffect for NodeEffect<M> {
             Self::Nop => None,
             Self::Compose(effects) if effects.len() > 1 => Some(effects.pop().unwrap()),
             _ => Some(replace(self, Self::Nop)),
+        }
+    }
+}
+
+pub enum ClientEvent<M> {
+    Op(Box<[u8]>),
+    Node(NodeEvent<M>),
+}
+
+pub enum ClientEffect<M> {
+    Result(Box<[u8]>),
+    Node(NodeEffect<M>),
+}
+
+impl<M> Composite for ClientEffect<M> {
+    const NOP: Self = Self::Node(NodeEffect::NOP);
+
+    fn compose(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Result(result), Self::Node(NodeEffect::Nop))
+            | (Self::Node(NodeEffect::Nop), Self::Result(result)) => Self::Result(result),
+            (Self::Node(NodeEffect::Nop), Self::Node(NodeEffect::Nop)) => {
+                Self::Node(NodeEffect::Nop)
+            }
+            _ => panic!(),
+        }
+    }
+
+    fn decompose(&mut self) -> Option<Self> {
+        match self {
+            Self::Result(_) => Some(replace(self, Self::Node(NodeEffect::Nop))),
+            Self::Node(effect) => effect.decompose().map(Self::Node),
         }
     }
 }
@@ -120,26 +156,31 @@ impl<N, I> Workload<N, I> {
 
     fn work<M, O>(&mut self) -> NodeEffect<M>
     where
-        N: Protocol<NodeEvent<M>, Effect = NodeEffect<M>>,
+        N: Protocol<ClientEvent<M>, Effect = ClientEffect<M>>,
         I: Iterator<Item = O>,
         O: Into<Box<[u8]>>,
     {
         if let Some(op) = self.ops.next() {
             self.instant = Instant::now();
-            self.node.update(NodeEvent::Op(op.into()))
+            if let ClientEffect::Node(effect) = self.node.update(ClientEvent::Op(op.into())) {
+                effect
+            } else {
+                panic!()
+            }
         } else {
+            // record finished?
             NodeEffect::Nop
         }
     }
 
-    fn process_effect<M, O>(&mut self, effect: NodeEffect<M>) -> NodeEffect<M>
+    fn process_effect<M, O>(&mut self, effect: ClientEffect<M>) -> NodeEffect<M>
     where
-        N: Protocol<NodeEvent<M>, Effect = NodeEffect<M>>,
+        N: Protocol<ClientEvent<M>, Effect = ClientEffect<M>>,
         I: Iterator<Item = O>,
         O: Into<Box<[u8]>>,
     {
         match effect {
-            NodeEffect::Notify(result) => {
+            ClientEffect::Result(result) => {
                 match self.mode.load(Ordering::SeqCst) {
                     WorkloadMode::DISCARD => {}
                     WorkloadMode::TEST => self.results.push(result),
@@ -149,33 +190,26 @@ impl<N, I> Workload<N, I> {
                 // TODO able to throttle
                 self.work()
             }
-            NodeEffect::Compose(mut effects) => {
-                if effects.is_empty() {
-                    NodeEffect::Nop
-                } else {
-                    let effect = effects.pop().unwrap();
-                    self.process_effect(effect) + self.process_effect(NodeEffect::Compose(effects))
-                }
-            }
-            effect => effect,
+            ClientEffect::Node(effect) => effect,
         }
     }
 }
 
 impl<N, I, O, M> Protocol<NodeEvent<M>> for Workload<N, I>
 where
-    N: Protocol<NodeEvent<M>, Effect = NodeEffect<M>>,
+    N: Protocol<ClientEvent<M>, Effect = ClientEffect<M>>,
     I: Iterator<Item = O>,
     O: Into<Box<[u8]>>,
 {
     type Effect = NodeEffect<M>;
 
-    fn init(&mut self) -> Self::Effect {
-        self.work()
-    }
-
     fn update(&mut self, event: NodeEvent<M>) -> Self::Effect {
-        let effect = self.node.update(event);
-        self.process_effect(effect)
+        let is_init = matches!(event, NodeEvent::Init);
+        let effect = self.node.update(ClientEvent::Node(event));
+        let mut effect = self.process_effect(effect);
+        if is_init {
+            effect = effect.compose(self.work());
+        }
+        effect
     }
 }

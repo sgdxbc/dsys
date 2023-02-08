@@ -3,6 +3,7 @@ use std::{
     marker::PhantomData,
     net::{SocketAddr, UdpSocket},
     ops::Range,
+    os::fd::AsRawFd,
     panic::panic_any,
     sync::Arc,
     thread::{spawn, JoinHandle},
@@ -13,7 +14,10 @@ use bincode::Options;
 use crossbeam::channel::{self, Receiver, RecvTimeoutError, Sender};
 
 use nix::{
+    errno::Errno,
+    poll::{ppoll, PollFd, PollFlags},
     sched::{sched_setaffinity, CpuSet},
+    sys::signal::{SigSet, Signal::SIGINT},
     unistd::Pid,
 };
 use serde::{de::DeserializeOwned, Serialize};
@@ -127,7 +131,7 @@ where
     N: Protocol<NodeEvent<M>, Effect = NodeEffect<M>>,
     M: Send + 'static + Serialize,
 {
-    perform_effect(node.init(), &effect_channel);
+    // perform_effect(node.init(), &effect_channel);
     let mut deadline = Instant::now() + Duration::from_millis(10);
     loop {
         let effect;
@@ -151,7 +155,6 @@ where
                 }
             }
             NodeEffect::Nop => {}
-            NodeEffect::Notify(_) => panic!(),
             NodeEffect::Send(destination, message) => channel
                 .send(EffectEvent::Send(destination, message))
                 .unwrap(),
@@ -210,6 +213,67 @@ fn run_effect<M>(
     }
 }
 
+pub enum RxEvent {
+    Handle(Box<[u8]>),
+}
+
+pub struct NodeRx<M>(PhantomData<M>);
+
+impl<M> Protocol<RxEvent> for NodeRx<M>
+where
+    M: DeserializeOwned,
+{
+    type Effect = NodeEvent<M>;
+
+    fn update(&mut self, event: RxEvent) -> Self::Effect {
+        let RxEvent::Handle(buf) = event;
+        let message = bincode::options()
+            .allow_trailing_bytes()
+            .deserialize(&buf)
+            .unwrap();
+        NodeEvent::Handle(message)
+    }
+}
+
+pub fn spawn_rx(socket: Arc<UdpSocket>) -> (JoinHandle<()>, channel::Receiver<RxEvent>) {
+    socket.set_nonblocking(true).unwrap();
+
+    let channel = channel::unbounded();
+    let handle = spawn(move || {
+        // TODO affinity
+
+        let mut buf = [0; 1500];
+        let sigmask = SigSet::from_iter([SIGINT].into_iter());
+        // can have exit condition
+        loop {
+            match ppoll(
+                &mut [PollFd::new(socket.as_raw_fd(), PollFlags::POLLIN)],
+                None,
+                Some(sigmask),
+            ) {
+                Err(Errno::EINTR) => break,
+                Err(err) => panic_any(err),
+                Ok(_) => {
+                    while let Ok((len, _)) = socket.recv_from(&mut buf) {
+                        channel
+                            .0
+                            .send(RxEvent::Handle(buf[..len].to_vec().into()))
+                            .unwrap()
+                    }
+                }
+            }
+        }
+    });
+    (handle, channel.1)
+}
+
+pub enum TxEvent {
+    Nop,
+    Send(SocketAddr, Box<[u8]>),
+    Broadcast(Box<[u8]>),
+}
+
+#[derive(Default)]
 pub struct NodeTx<M>(PhantomData<M>);
 
 impl<M> Protocol<NodeEffect<M>> for NodeTx<M>
@@ -217,10 +281,6 @@ where
     M: Serialize,
 {
     type Effect = TxEvent;
-
-    fn init(&mut self) -> Self::Effect {
-        TxEvent::Nop
-    }
 
     fn update(&mut self, event: NodeEffect<M>) -> Self::Effect {
         match event {
@@ -243,16 +303,8 @@ pub struct Tx {
     broadcast: Box<[SocketAddr]>,
 }
 
-pub enum TxEvent {
-    Nop,
-    Send(SocketAddr, Box<[u8]>),
-    Broadcast(Box<[u8]>),
-}
-
 impl Protocol<TxEvent> for Tx {
     type Effect = ();
-
-    fn init(&mut self) -> Self::Effect {}
 
     fn update(&mut self, event: TxEvent) -> Self::Effect {
         match event {
