@@ -113,11 +113,11 @@ impl<M> Lifecycle<M> {
 }
 
 impl<M> Generate for Lifecycle<M> {
-    type Event = NodeEvent<M>;
+    type Event<'a> = NodeEvent<M>;
 
     fn deploy<P>(&mut self, node: &mut P)
     where
-        P: Protocol<Self::Event>,
+        P: for<'a> Protocol<Self::Event<'a>>,
     {
         assert!(!self.running.swap(true, Ordering::SeqCst));
 

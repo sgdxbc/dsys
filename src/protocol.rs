@@ -66,19 +66,19 @@ impl<E> Protocol<E> for channel::Sender<E> {
 }
 
 pub trait Generate {
-    type Event;
+    type Event<'a>;
 
     fn deploy<P>(&mut self, protocol: &mut P)
     where
-        P: Protocol<Self::Event, Effect = ()>;
+        P: for<'a> Protocol<Self::Event<'a>, Effect = ()>;
 }
 
 impl<E> Generate for channel::Receiver<E> {
-    type Event = E;
+    type Event<'a> = E;
 
     fn deploy<P>(&mut self, protocol: &mut P)
     where
-        P: Protocol<Self::Event>,
+        P: for<'a> Protocol<Self::Event<'a>>,
     {
         for event in self.iter() {
             protocol.update(event);

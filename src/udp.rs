@@ -30,8 +30,8 @@ pub fn init_socket(socket: &UdpSocket) {
     .unwrap();
 }
 
-pub enum RxEvent {
-    Receive(Box<[u8]>),
+pub enum RxEvent<'a> {
+    Receive(&'a [u8]),
 }
 
 pub struct NodeRx<M>(PhantomData<M>);
@@ -42,7 +42,7 @@ impl<M> Default for NodeRx<M> {
     }
 }
 
-impl<M> Protocol<RxEvent> for NodeRx<M>
+impl<M> Protocol<RxEvent<'_>> for NodeRx<M>
 where
     M: DeserializeOwned,
 {
@@ -61,11 +61,11 @@ where
 pub struct Rx(pub Arc<UdpSocket>);
 
 impl Generate for Rx {
-    type Event = RxEvent;
+    type Event<'a> = RxEvent<'a>;
 
     fn deploy<P>(&mut self, protocol: &mut P)
     where
-        P: Protocol<Self::Event>,
+        P: for<'a> Protocol<Self::Event<'a>>,
     {
         let mut buf = [0; 1500];
         let poll_fd = PollFd::new(self.0.as_raw_fd(), PollFlags::POLLIN);
@@ -77,7 +77,7 @@ impl Generate for Rx {
                 Err(err) => panic_any(err),
                 Ok(_) => {
                     while let Ok((len, _)) = self.0.recv_from(&mut buf) {
-                        protocol.update(RxEvent::Receive(buf[..len].to_vec().into()));
+                        protocol.update(RxEvent::Receive(&buf[..len]));
                     }
                 }
             }
