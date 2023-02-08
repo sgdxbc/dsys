@@ -1,8 +1,4 @@
-use std::thread::JoinHandle;
-
 use crossbeam::channel;
-
-use crate::set_affinity;
 
 pub trait Protocol<Event> {
     type Effect;
@@ -34,57 +30,60 @@ impl Composite for () {
     }
 }
 
+impl<P, E> Protocol<E> for &mut P
+where
+    P: Protocol<E>,
+{
+    type Effect = P::Effect;
+
+    fn update(&mut self, event: E) -> Self::Effect {
+        P::update(self, event)
+    }
+}
+
+pub struct Identity;
+impl<E> Protocol<E> for Identity {
+    type Effect = E;
+
+    fn update(&mut self, event: E) -> Self::Effect {
+        event
+    }
+}
+
+pub struct Null;
+impl<E> Protocol<E> for Null {
+    type Effect = ();
+
+    fn update(&mut self, _: E) -> Self::Effect {}
+}
+
+impl<E> Protocol<E> for channel::Sender<E> {
+    type Effect = ();
+
+    fn update(&mut self, event: E) -> Self::Effect {
+        self.send(event).unwrap()
+    }
+}
+
 pub trait Generate {
     type Event;
 
-    fn deploy<P>(&mut self, protocol: &mut P, channel: Option<channel::Sender<P::Effect>>)
+    fn deploy<P>(&mut self, protocol: &mut P)
     where
-        P: Protocol<Self::Event>;
+        P: Protocol<Self::Event, Effect = ()>;
 }
 
 impl<E> Generate for channel::Receiver<E> {
     type Event = E;
 
-    fn deploy<P>(&mut self, protocol: &mut P, channel: Option<channel::Sender<P::Effect>>)
+    fn deploy<P>(&mut self, protocol: &mut P)
     where
         P: Protocol<Self::Event>,
     {
         for event in self.iter() {
-            if let Some(channel) = &channel {
-                channel.send(protocol.update(event)).unwrap()
-            }
+            protocol.update(event);
         }
     }
-}
-
-pub fn spawn<P, E>(
-    protocols: Box<[P]>,
-    affinity: Option<usize>,
-    event_channel: channel::Receiver<E>,
-    effect_channel: Option<channel::Sender<P::Effect>>,
-) -> Box<[JoinHandle<P>]>
-where
-    P: Protocol<E> + Send + 'static,
-    E: Send + 'static,
-    P::Effect: Send + 'static,
-{
-    let mut handles = Vec::new();
-    for (i, mut protocol) in Vec::from(protocols).into_iter().enumerate() {
-        let event_channel = event_channel.clone();
-        let effect_channel = effect_channel.clone();
-        let handle = std::thread::spawn(move || {
-            set_affinity(affinity.map(|n| n + i));
-            for event in event_channel.iter() {
-                let effect = protocol.update(event);
-                if let Some(effect_channel) = &effect_channel {
-                    effect_channel.send(effect).unwrap(); //
-                }
-            }
-            protocol
-        });
-        handles.push(handle);
-    }
-    handles.into()
 }
 
 pub enum Multiplex<A, B> {

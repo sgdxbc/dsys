@@ -1,34 +1,32 @@
 use std::{
     env::args,
-    fs::File,
-    io::Write,
     iter::repeat_with,
     net::{ToSocketAddrs, UdpSocket},
     sync::{
-        atomic::{AtomicU8, Ordering},
+        atomic::{AtomicBool, AtomicU8, Ordering},
         Arc,
     },
-    thread::sleep,
+    thread::{sleep, spawn},
     time::Duration,
 };
 
+use crossbeam::channel;
 use dsys::{
-    node::{Workload, WorkloadMode},
-    udp::{run, TransportConfig},
+    node::{Lifecycle, Workload, WorkloadMode},
+    protocol::Generate,
+    udp,
     unreplicated::Client,
-    NodeAddr,
+    NodeAddr, Protocol,
 };
 use rand::random;
 
 fn main() {
-    // create the result file first so if crash later file will keep empty
-    let mut result = File::create("result.txt").unwrap();
-
     let ip = args().nth(1).unwrap_or(String::from("localhost"));
     let replica_ip = args().nth(2).unwrap_or(String::from("localhost"));
-    let socket = UdpSocket::bind((ip, 0)).unwrap();
+    let socket = Arc::new(UdpSocket::bind((ip, 0)).unwrap());
+    udp::init_socket(&socket);
     let mode = Arc::new(AtomicU8::new(WorkloadMode::Discard as _));
-    let node = Workload::new_benchmark(
+    let mut node = Workload::new_benchmark(
         Client::new(
             random(),
             NodeAddr::Socket(socket.local_addr().unwrap()),
@@ -43,14 +41,27 @@ fn main() {
         repeat_with::<Box<[u8]>, _>(Default::default),
         mode.clone(),
     );
-    let transport = run(
-        node,
-        TransportConfig {
-            socket,
-            affinity: None,
-            broadcast: Default::default(),
-        },
-    );
+
+    let event_channel = channel::unbounded();
+    let mut rx = udp::Rx(socket.clone());
+    let _rx = spawn(move || rx.deploy(&mut udp::NodeRx::default().then(event_channel.0)));
+
+    let running = Arc::new(AtomicBool::new(false));
+    let node = spawn({
+        let running = running.clone();
+        // no more receiver other than the moved one
+        // just keep one receiver always connected to workaround `_rx` thread
+        #[allow(clippy::redundant_clone)]
+        let event_channel = event_channel.1.clone();
+        move || {
+            Lifecycle::new(event_channel, running).deploy(
+                &mut (&mut node)
+                    .then(udp::NodeTx::default())
+                    .then(udp::Tx::new(socket)),
+            );
+            node
+        }
+    });
 
     sleep(Duration::from_secs(2)); // warm up
     mode.store(WorkloadMode::Benchmark as _, Ordering::SeqCst);
@@ -58,18 +69,15 @@ fn main() {
     mode.store(WorkloadMode::Discard as _, Ordering::SeqCst);
     sleep(Duration::from_secs(2)); // cool down
 
-    let node = transport.stop();
-    let mut latencies = node.latencies;
-
-    writeln!(result, "{}", latencies.len()).unwrap();
+    running.store(false, Ordering::SeqCst);
+    let mut latencies = node.join().unwrap().latencies;
+    println!("{}", latencies.len());
     if !latencies.is_empty() {
         latencies.sort_unstable();
-        writeln!(
-            result,
+        println!(
             "50th {:?} 99th {:?}",
             latencies[latencies.len() / 2],
             latencies[latencies.len() * 99 / 100]
         )
-        .unwrap();
     }
 }

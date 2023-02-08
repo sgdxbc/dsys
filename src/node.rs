@@ -2,10 +2,9 @@ use std::{
     mem::replace,
     net::SocketAddr,
     sync::{
-        atomic::{AtomicU8, Ordering},
+        atomic::{AtomicBool, AtomicU8, Ordering},
         Arc,
     },
-    thread::JoinHandle,
     time::{Duration, Instant},
 };
 
@@ -14,7 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     protocol::{Composite, Generate},
-    set_affinity, Protocol,
+    Protocol,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -101,67 +100,43 @@ impl<M> Composite for ClientEffect<M> {
 
 pub struct Lifecycle<M> {
     event_channel: channel::Receiver<NodeEvent<M>>,
+    running: Arc<AtomicBool>,
 }
 
 impl<M> Lifecycle<M> {
-    pub fn new(event_channel: channel::Receiver<NodeEvent<M>>) -> Self {
-        Self { event_channel }
+    pub fn new(event_channel: channel::Receiver<NodeEvent<M>>, running: Arc<AtomicBool>) -> Self {
+        Self {
+            event_channel,
+            running,
+        }
     }
 }
 
 impl<M> Generate for Lifecycle<M> {
     type Event = NodeEvent<M>;
 
-    fn deploy<P>(&mut self, node: &mut P, channel: Option<channel::Sender<P::Effect>>)
+    fn deploy<P>(&mut self, node: &mut P)
     where
         P: Protocol<Self::Event>,
     {
-        let channel = channel.unwrap();
-        let effect = node.update(NodeEvent::Init);
-        channel.send(effect).unwrap();
+        assert!(!self.running.swap(true, Ordering::SeqCst));
+
+        node.update(NodeEvent::Init);
+
         let mut deadline = Instant::now() + Duration::from_millis(10);
-        loop {
+        while self.running.load(Ordering::SeqCst) {
             match self.event_channel.recv_deadline(deadline) {
-                Ok(event) => channel.send(node.update(event)).unwrap(),
+                Ok(event) => {
+                    node.update(event);
+                }
                 Err(channel::RecvTimeoutError::Disconnected) => break,
                 Err(channel::RecvTimeoutError::Timeout) => {
                     deadline = Instant::now() + Duration::from_millis(10);
-                    channel.send(node.update(NodeEvent::Tick)).unwrap()
+                    node.update(NodeEvent::Tick);
                 }
             }
         }
     }
-}
-
-pub fn spawn<N, M>(
-    mut node: N,
-    affinity: Option<usize>,
-    event_channel: channel::Receiver<NodeEvent<M>>,
-    effect_channel: channel::Sender<N::Effect>,
-) -> JoinHandle<N>
-where
-    N: Protocol<NodeEvent<M>> + Send + 'static,
-    NodeEvent<M>: Send + 'static,
-    N::Effect: Send + 'static,
-{
-    std::thread::spawn(move || {
-        set_affinity(affinity);
-
-        effect_channel.send(node.update(NodeEvent::Init)).unwrap();
-        let mut deadline = Instant::now() + Duration::from_millis(10);
-        loop {
-            match event_channel.recv_deadline(deadline) {
-                Ok(event) => effect_channel.send(node.update(event)).unwrap(),
-                Err(channel::RecvTimeoutError::Disconnected) => break,
-                Err(channel::RecvTimeoutError::Timeout) => {
-                    deadline = Instant::now() + Duration::from_millis(10);
-                    effect_channel.send(node.update(NodeEvent::Tick)).unwrap()
-                }
-            }
-        }
-
-        node
-    })
 }
 
 pub struct Workload<N, I> {

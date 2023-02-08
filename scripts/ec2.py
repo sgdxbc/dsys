@@ -79,7 +79,7 @@ if sys.argv[1:2] == ['launch']:
     # launch(sys.argv[2:], True)
     # print('Dry run finish')
     instances, addresses = launch(sys.argv[2:], False)
-    print('Finish')
+    print('requested')
     for instance in instances:
         instance.wait_until_running()
         print('.', end='', flush=True)
