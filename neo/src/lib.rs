@@ -6,7 +6,7 @@ pub use client::Client;
 pub use replica::Replica;
 pub use seq::Sequencer;
 
-use dsys::{NodeAddr, NodeEffect, NodeEvent};
+use dsys::NodeAddr;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -22,7 +22,6 @@ pub struct Multicast {
     seq: u32,
     signature: [u32; 16],
     digest: [u8; 32],
-    payload: Box<[u8]>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -35,9 +34,6 @@ pub struct Reply {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Message {
-    Request(Multicast),
+    Request(Multicast, Request),
     Reply(Reply),
 }
-
-pub type Event = NodeEvent<Message>;
-pub type Effect = NodeEffect<Message>;

@@ -5,7 +5,7 @@ use std::{
 
 use clap::Parser;
 use dsys::udp::{run, TransportConfig};
-use neo::Sequencer;
+use neo::SipHashSequencer;
 
 #[derive(Debug, Parser)]
 struct Cli {
@@ -18,7 +18,7 @@ struct Cli {
 fn main() {
     let cli = Cli::parse();
     let transport = run(
-        Sequencer::default(),
+        SipHashSequencer::default(),
         TransportConfig {
             socket: UdpSocket::bind((cli.addr.unwrap_or("127.0.0.1".parse().unwrap()), 5001))
                 .unwrap(),

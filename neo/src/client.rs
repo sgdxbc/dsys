@@ -1,10 +1,14 @@
 use std::collections::HashMap;
 
 use bincode::Options;
-use dsys::{NodeAddr, Protocol};
+use dsys::{
+    node::{ClientEffect, ClientEvent},
+    protocol::Composite,
+    NodeAddr, NodeEffect, NodeEvent, Protocol,
+};
 use sha2::Digest;
 
-use crate::{Effect, Event, Message, Multicast, Reply, Request};
+use crate::{Message, Multicast, Reply, Request};
 
 pub struct Client {
     id: u32,
@@ -32,71 +36,70 @@ impl Client {
     }
 }
 
-impl Protocol<Event> for Client {
-    type Effect = Effect;
+impl Protocol<ClientEvent<Message>> for Client {
+    type Effect = ClientEffect<Message>;
 
-    fn init(&mut self) -> Self::Effect {
-        Effect::Nop
-    }
-
-    fn update(&mut self, event: Event) -> Self::Effect {
+    fn update(&mut self, event: ClientEvent<Message>) -> Self::Effect {
         match event {
-            Event::Op(op) => {
+            ClientEvent::Op(op) => {
                 assert!(self.op.is_none());
-                self.op = Some(op.clone());
+                self.op = Some(op);
                 self.request_num += 1;
                 self.ticked = 0;
                 self.do_request()
             }
-            Event::Tick => {
+            ClientEvent::Node(NodeEvent::Init) => ClientEffect::NOP,
+            ClientEvent::Node(NodeEvent::Tick) => {
                 if self.op.is_none() {
-                    return Effect::Nop;
+                    return ClientEffect::NOP;
                 };
                 self.ticked += 1;
                 if self.ticked == 1 {
-                    return Effect::Nop;
+                    return ClientEffect::NOP;
                 }
                 if self.ticked == 2 {
-                    println!("resend");
+                    eprintln!("resend");
                 }
                 self.do_request()
             }
-            Event::Handle(Message::Reply(reply)) => {
+            ClientEvent::Node(NodeEvent::Handle(Message::Reply(reply))) => {
                 if self.op.is_none() || reply.request_num != self.request_num {
-                    return Effect::Nop;
+                    return ClientEffect::NOP;
                 }
                 self.results.insert(reply.replica_id, reply.clone());
                 // TODO properly check safety
                 if self.results.len() == 2 * self.f + 1 {
                     self.results.drain();
                     self.op = None;
-                    Effect::Notify(reply.result)
+                    ClientEffect::Result(reply.result)
                 } else {
-                    Effect::Nop
+                    ClientEffect::NOP
                 }
             }
-            Event::Handle(_) => unreachable!(),
+            ClientEvent::Node(NodeEvent::Handle(_)) => unreachable!(),
         }
     }
 }
 
 impl Client {
-    fn do_request(&self) -> Effect {
+    fn do_request(&self) -> ClientEffect<Message> {
         let request = Request {
             client_id: self.id,
             client_addr: self.addr,
             request_num: self.request_num,
             op: self.op.clone().unwrap(),
         };
-        let request = bincode::options().serialize(&request).unwrap();
-        Effect::Send(
+        let digest = sha2::Sha256::digest(bincode::options().serialize(&request).unwrap()).into();
+        ClientEffect::Node(NodeEffect::Send(
             self.multicast_addr,
-            Message::Request(Multicast {
-                seq: 0,
-                signature: Default::default(),
-                digest: sha2::Sha256::digest(&request).into(),
-                payload: request.into(),
-            }),
-        )
+            Message::Request(
+                Multicast {
+                    seq: 0,
+                    signature: Default::default(),
+                    digest,
+                },
+                request,
+            ),
+        ))
     }
 }

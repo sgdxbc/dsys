@@ -49,20 +49,16 @@ where
     }
 }
 
-pub struct Identity;
-impl<E> Protocol<E> for Identity {
-    type Effect = E;
+pub struct Map<F>(pub F);
+impl<E, F, T> Protocol<E> for Map<F>
+where
+    F: FnMut(E) -> T,
+{
+    type Effect = T;
 
     fn update(&mut self, event: E) -> Self::Effect {
-        event
+        (self.0)(event)
     }
-}
-
-pub struct Null;
-impl<E> Protocol<E> for Null {
-    type Effect = ();
-
-    fn update(&mut self, _: E) -> Self::Effect {}
 }
 
 impl<E> Protocol<E> for channel::Sender<E> {

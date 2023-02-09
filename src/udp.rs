@@ -31,7 +31,7 @@ pub fn init_socket(socket: &UdpSocket) {
 }
 
 pub enum RxEvent<'a> {
-    Receive(&'a [u8]),
+    Receive(&'a mut [u8]),
 }
 
 pub struct NodeRx<M>(PhantomData<M>);
@@ -52,7 +52,7 @@ where
         let RxEvent::Receive(buf) = event;
         let message = bincode::options()
             .allow_trailing_bytes()
-            .deserialize(&buf)
+            .deserialize(buf)
             .unwrap();
         NodeEvent::Handle(message)
     }
@@ -77,7 +77,7 @@ impl Generate for Rx {
                 Err(err) => panic_any(err),
                 Ok(_) => {
                     while let Ok((len, _)) = self.0.recv_from(&mut buf) {
-                        protocol.update(RxEvent::Receive(&buf[..len]));
+                        protocol.update(RxEvent::Receive(&mut buf[..len]));
                     }
                 }
             }

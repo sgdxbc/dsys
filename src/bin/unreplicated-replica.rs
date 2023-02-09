@@ -1,4 +1,5 @@
 use std::{
+    convert::identity,
     env::args,
     net::UdpSocket,
     sync::Arc,
@@ -9,7 +10,7 @@ use crossbeam::channel;
 use dsys::{
     app,
     node::Lifecycle,
-    protocol::{Generate, Identity},
+    protocol::{Generate, Map},
     udp,
     unreplicated::Replica,
     App, Protocol,
@@ -44,13 +45,15 @@ fn main() {
         Lifecycle::new(event_channel.1, Default::default()).deploy(&mut node.then(effect_channel.0))
     });
 
+    // save the last parallelism for IRQ handling
     for i in 2..available_parallelism().unwrap().get() - 1 {
         let mut effect_channel = effect_channel.1.clone();
         let socket = socket.clone();
         let _tx = spawn(move || {
             set_affinity(i);
-            effect_channel
-                .deploy(&mut Identity.each_then(udp::NodeTx::default().then(udp::Tx::new(socket))))
+            effect_channel.deploy(
+                &mut Map(identity).each_then(udp::NodeTx::default().then(udp::Tx::new(socket))),
+            )
         });
     }
 

@@ -1,19 +1,16 @@
 use std::{
-    collections::{hash_map::DefaultHasher, HashMap},
-    hash::{Hash, Hasher},
+    collections::HashMap,
     ops::{Index, IndexMut},
 };
 
-use bincode::Options;
-use dsys::{App, Protocol};
-use sha2::Digest;
+use dsys::{protocol::Composite, App, Protocol};
 
-use crate::{Effect, Event, Message, Multicast, Reply, Request};
+use crate::{Message, Multicast, Reply, Request};
 
 pub struct Replica {
     id: u8,
     pub log: Vec<LogEntry>,
-    reorder_request: HashMap<u32, Multicast>,
+    reorder_request: HashMap<u32, (Multicast, Request)>,
     app: App,
     replies: HashMap<u32, Reply>,
 }
@@ -51,19 +48,18 @@ impl IndexMut<u32> for Replica {
     }
 }
 
+type Event = dsys::NodeEvent<Message>;
+type Effect = dsys::NodeEffect<Message>;
+
 impl Protocol<Event> for Replica {
     type Effect = Effect;
-
-    fn init(&mut self) -> Self::Effect {
-        Effect::Nop
-    }
 
     fn update(&mut self, event: Event) -> Self::Effect {
         let Event::Handle(message) = event else {
             return Effect::Nop;
         };
         match message {
-            Message::Request(multicast) => self.reorder_request(multicast),
+            Message::Request(multicast, request) => self.reorder_request(multicast, request),
             _ => Effect::Nop,
         }
     }
@@ -74,35 +70,22 @@ impl Replica {
         self.log.len() as u32 + 1
     }
 
-    fn reorder_request(&mut self, multicast: Multicast) -> Effect {
-        let verified = {
-            let digest = <[u8; 32]>::from(sha2::Sha256::digest(&multicast.payload));
-            let mut hasher = DefaultHasher::new();
-            digest.hash(&mut hasher);
-            hasher.finish().to_le() as u32 == multicast.signature[0] //
-        };
-        if !verified {
-            println!("malformed");
-            return Effect::Nop;
-        }
-
+    fn reorder_request(&mut self, multicast: Multicast, request: Request) -> Effect {
         if multicast.seq != self.next_entry() {
-            self.reorder_request.insert(multicast.seq, multicast);
+            self.reorder_request
+                .insert(multicast.seq, (multicast, request));
             return Effect::Nop;
         }
 
-        let mut effect = self.handle_request(multicast);
-        while let Some(multicast) = self.reorder_request.remove(&self.next_entry()) {
-            effect = effect + self.handle_request(multicast);
+        let mut effect = self.handle_request(multicast, request);
+        while let Some((multicast, request)) = self.reorder_request.remove(&self.next_entry()) {
+            effect = effect.compose(self.handle_request(multicast, request));
         }
         effect
     }
 
-    fn handle_request(&mut self, multicast: Multicast) -> Effect {
+    fn handle_request(&mut self, multicast: Multicast, request: Request) -> Effect {
         assert_eq!(multicast.seq, self.next_entry());
-        let request = bincode::options()
-            .deserialize::<Request>(&multicast.payload)
-            .unwrap();
         self.log.push(LogEntry {
             request: request.clone(),
             seq: multicast.seq,
