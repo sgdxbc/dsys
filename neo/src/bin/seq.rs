@@ -1,5 +1,5 @@
 use std::{
-    net::{IpAddr, Ipv4Addr, UdpSocket},
+    net::{Ipv4Addr, UdpSocket},
     sync::Arc,
     thread::{available_parallelism, spawn},
 };
@@ -12,8 +12,6 @@ use neo::Sequencer;
 #[derive(Debug, Parser)]
 struct Cli {
     #[clap(long)]
-    addr: IpAddr,
-    #[clap(long)]
     multicast: Ipv4Addr,
     #[clap(long)]
     replica_count: u32,
@@ -21,7 +19,7 @@ struct Cli {
 
 fn main() {
     let cli = Cli::parse();
-    let socket = Arc::new(UdpSocket::bind((cli.addr, 5001)).unwrap());
+    let socket = Arc::new(UdpSocket::bind(("0.0.0.0", 5001)).unwrap());
     neo::init_socket(&socket, None); // only send multicast
 
     // core 0: udp::Rx -> Sequencer -> _chan_

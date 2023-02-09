@@ -22,8 +22,6 @@ use rand::random;
 #[derive(Debug, Parser)]
 struct Cli {
     #[clap(long)]
-    ip: IpAddr,
-    #[clap(long)]
     seq_ip: IpAddr,
     #[clap(short)]
     f: usize,
@@ -31,7 +29,8 @@ struct Cli {
 
 fn main() {
     let cli = Cli::parse();
-    let socket = Arc::new(UdpSocket::bind((cli.ip, 0)).unwrap());
+    let socket = Arc::new(UdpSocket::bind(("0.0.0.0", 0)).unwrap());
+    socket.connect((cli.seq_ip, 5001)).unwrap();
     neo::init_socket(&socket, None);
     let mode = Arc::new(AtomicU8::new(WorkloadMode::Discard as _));
     let mut node = Workload::new_benchmark(

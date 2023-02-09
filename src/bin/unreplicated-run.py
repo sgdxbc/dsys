@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from asyncio import create_subprocess_exec, run, gather, sleep
 from subprocess import PIPE
-from sys import stderr
+from sys import stderr, argv
 
 async def remote(address, args, stdout=None, stderr=None):
     return await create_subprocess_exec(
@@ -34,7 +34,7 @@ async def eval(client_count):
     print('launch replica', file=stderr)
     replica = await remote(
         replica_address, 
-        ['tmux', 'new-session', '-d', '-s', 'unreplicated', './unreplicated-replica', replica_address])
+        ['tmux', 'new-session', '-d', '-s', 'unreplicated', './unreplicated-replica'])
     await replica.wait()
     await sleep(1)
 
@@ -42,7 +42,7 @@ async def eval(client_count):
     clients = [
         await remote(
             client_address, 
-            ['./unreplicated-client', client_address, replica_address], 
+            ['./unreplicated-client', replica_address], 
             stdout=PIPE, stderr=PIPE)
         for client_address in client_addresses]
 
@@ -64,13 +64,15 @@ async def eval(client_count):
         if client.returncode != 0:
             count = None
             print(err.decode())
+        if count is None:
+            continue
         [client_count, latency] = out.decode().splitlines()
-        if count is not None:
-            count += int(client_count)
+        count += int(client_count)
         if output_lantecy:
             print(latency)
             output_lantecy = False
-    print(count / 10)
+    if count is not None:
+        print(count / 10)
 
     print('clean up', file=stderr)
     await remote_sync(replica_address, ['pkill', 'unreplicated'])
@@ -78,7 +80,9 @@ async def eval(client_count):
         remote_sync(client_address, ['pkill', 'unreplicated'])
         for client_address in client_addresses])
 
-for client_count in [1, 2, 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]:
-# for client_count in [100]:
-    print(client_count)
-    run(eval(client_count))
+if argv[1:2] == ['test']:
+    run(eval(1))
+else:
+    for client_count in [1, 2, 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]:
+        print(client_count)
+        run(eval(client_count))

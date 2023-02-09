@@ -2,6 +2,7 @@ use std::{
     env::args,
     iter::repeat_with,
     net::{ToSocketAddrs, UdpSocket},
+    process::exit,
     sync::{
         atomic::{AtomicBool, AtomicU8, Ordering},
         Arc,
@@ -21,9 +22,9 @@ use dsys::{
 use rand::random;
 
 fn main() {
-    let ip = args().nth(1).unwrap_or(String::from("localhost"));
-    let replica_ip = args().nth(2).unwrap_or(String::from("localhost"));
-    let socket = Arc::new(UdpSocket::bind((ip, 0)).unwrap());
+    let replica_ip = args().nth(1).unwrap_or(String::from("localhost"));
+    let socket = Arc::new(UdpSocket::bind(("0.0.0.0", 0)).unwrap());
+    socket.connect((&*replica_ip, 5000)).unwrap(); // query a local addr
     udp::init_socket(&socket);
     let mode = Arc::new(AtomicU8::new(WorkloadMode::Discard as _));
     let mut node = Workload::new_benchmark(
@@ -71,7 +72,9 @@ fn main() {
     running.store(false, Ordering::SeqCst);
     let mut latencies = node.join().unwrap().latencies;
     println!("{}", latencies.len());
-    if !latencies.is_empty() {
+    if latencies.is_empty() {
+        exit(1)
+    } else {
         latencies.sort_unstable();
         println!(
             "50th {:?} 99th {:?}",

@@ -1,6 +1,6 @@
 use std::{
     convert::identity,
-    net::{IpAddr, Ipv4Addr, UdpSocket},
+    net::{Ipv4Addr, UdpSocket},
     sync::Arc,
     thread::{available_parallelism, spawn},
 };
@@ -18,8 +18,6 @@ use neo::{Replica, RxP256};
 #[derive(Debug, Parser)]
 struct Cli {
     #[clap(long)]
-    ip: IpAddr,
-    #[clap(long)]
     multicast: Ipv4Addr,
     #[clap(long)]
     id: u8,
@@ -29,7 +27,7 @@ struct Cli {
 
 fn main() {
     let cli = Cli::parse();
-    let socket = Arc::new(UdpSocket::bind((cli.ip, 5000)).unwrap());
+    let socket = Arc::new(UdpSocket::bind(("0.0.0.0", 5000)).unwrap());
     neo::init_socket(&socket, Some(cli.multicast));
     let node = Replica::new(cli.id, App::Null(app::Null));
     let rx = match &*cli.signer {

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, net::Ipv4Addr};
 
 use serde::{Deserialize, Serialize};
 
@@ -40,6 +40,7 @@ pub struct Client {
 
 impl Client {
     pub fn new(id: u32, addr: NodeAddr, replica_addr: NodeAddr) -> Self {
+        assert!(!matches!(addr, NodeAddr::Socket(addr) if addr.ip() == Ipv4Addr::UNSPECIFIED));
         Self {
             id,
             addr,
@@ -173,10 +174,9 @@ mod tests {
                 [b"hello".to_vec()].into_iter(),
             )),
         );
-        simulate.nodes.insert(
-            TestReplica(0),
-            OneOf::B(Replica::new(App::Echo(app::Echo))),
-        );
+        simulate
+            .nodes
+            .insert(TestReplica(0), OneOf::B(Replica::new(App::Echo(app::Echo))));
         simulate.init();
         let mut effect;
         while {

@@ -1,6 +1,5 @@
 use std::{
     convert::identity,
-    env::args,
     net::UdpSocket,
     sync::Arc,
     thread::{available_parallelism, spawn},
@@ -17,8 +16,7 @@ use dsys::{
 };
 
 fn main() {
-    let ip = args().nth(1).unwrap_or(String::from("localhost"));
-    let socket = Arc::new(UdpSocket::bind((ip, 5000)).unwrap());
+    let socket = Arc::new(UdpSocket::bind(("0.0.0.0", 5000)).unwrap());
     udp::init_socket(&socket);
     let node = Replica::new(App::Null(app::Null));
 
