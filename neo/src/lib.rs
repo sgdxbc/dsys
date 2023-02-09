@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use siphasher::sip::SipHasher;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Request {
     client_id: u32,
     client_addr: NodeAddr,
