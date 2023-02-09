@@ -50,16 +50,20 @@ pub enum Message {
     Reply(Reply),
 }
 
-pub fn init_socket(socket: &UdpSocket, multicast_ip: Ipv4Addr) {
+pub fn init_socket(socket: &UdpSocket, multicast_ip: Option<Ipv4Addr>) {
     dsys::udp::init_socket(socket);
-    socket
-        .join_multicast_v4(&multicast_ip, &Ipv4Addr::UNSPECIFIED)
-        .unwrap();
+    if let Some(multicast_ip) = multicast_ip {
+        assert!(multicast_ip.is_multicast());
+        socket
+            .join_multicast_v4(&multicast_ip, &Ipv4Addr::UNSPECIFIED)
+            .unwrap();
+    }
 }
 
 pub enum RxMulticast {
     SipHash { id: u8 },
     P256 { public_key: PublicKey },
+    Reject,
 }
 
 pub struct Rx {
@@ -100,16 +104,19 @@ impl Protocol<RxEvent<'_>> for Rx {
     fn update(&mut self, event: RxEvent<'_>) -> Self::Effect {
         let RxEvent::Receive(buf) = event;
         if buf[..4] == [0; 4] {
-            // return bincode::options()
-            //     .allow_trailing_bytes()
-            //     .deserialize(&buf[4..])
-            //     .unwrap();
-            unreachable!() // for now
+            // TODO verify cross replica messages
+            return Some(
+                bincode::options()
+                    .allow_trailing_bytes()
+                    .deserialize(&buf[4..])
+                    .unwrap(),
+            );
         }
 
         let mut digest = <[u8; 32]>::from(sha2::Sha256::digest(&buf[68..]));
         digest[..4].copy_from_slice(&buf[..4]);
         match &self.multicast {
+            RxMulticast::Reject => return None,
             RxMulticast::SipHash { id } => {
                 let i = u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]) as u8;
                 if (i..i + 4).contains(id) {
@@ -155,7 +162,7 @@ impl Protocol<RxEvent<'_>> for Rx {
 
 pub struct Tx {
     // if send to this address, include full 96 bytes multicast header in payload
-    multicast: SocketAddr,
+    pub multicast: Option<SocketAddr>,
 }
 
 impl Protocol<NodeEffect<Message>> for Tx {
@@ -167,7 +174,7 @@ impl Protocol<NodeEffect<Message>> for Tx {
                 let buf = bincode::options().serialize(&message).unwrap();
                 TxEvent::Broadcast([&[0; 4][..], &buf].concat().into())
             }
-            NodeEffect::Send(NodeAddr::Socket(addr), message) if addr != self.multicast => {
+            NodeEffect::Send(NodeAddr::Socket(addr), message) if Some(addr) != self.multicast => {
                 let buf = bincode::options().serialize(&message).unwrap();
                 TxEvent::Send(addr, [&[0; 4][..], &buf].concat().into())
             }
@@ -175,7 +182,7 @@ impl Protocol<NodeEffect<Message>> for Tx {
                 let buf = bincode::options().serialize(&message).unwrap();
                 let digest = <[u8; 32]>::from(sha2::Sha256::digest(&buf));
                 TxEvent::Send(
-                    self.multicast,
+                    self.multicast.unwrap(),
                     [&digest[..], &[0; 36][..], &buf].concat().into(),
                 )
             }

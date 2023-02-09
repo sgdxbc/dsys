@@ -1,58 +1,81 @@
 use std::{
-    env::args,
-    fs::File,
-    io::Write,
     iter::repeat_with,
-    net::{ToSocketAddrs, UdpSocket},
+    net::{IpAddr, ToSocketAddrs, UdpSocket},
     sync::{
-        atomic::{AtomicU8, Ordering},
+        atomic::{AtomicBool, AtomicU8, Ordering},
         Arc,
     },
-    thread::sleep,
+    thread::{sleep, spawn},
     time::Duration,
 };
 
+use clap::Parser;
+use crossbeam::channel;
 use dsys::{
-    node::{Workload, WorkloadMode},
-    udp::{run, TransportConfig},
-    NodeAddr,
+    node::{Lifecycle, Workload, WorkloadMode},
+    protocol::Generate,
+    udp, NodeAddr, Protocol,
 };
-use neo::Client;
+use neo::{Client, RxMulticast};
 use rand::random;
 
-fn main() {
-    // create the result file first so if crash later file will keep empty
-    let mut result = File::create("result.txt").unwrap();
+#[derive(Debug, Parser)]
+struct Cli {
+    #[clap(long)]
+    ip: IpAddr,
+    #[clap(long)]
+    seq_ip: IpAddr,
+    #[clap(short)]
+    f: usize,
+}
 
-    let f = args().nth(1).unwrap().parse().unwrap();
-    let ip = args().nth(2).unwrap_or(String::from("localhost"));
-    let multicast_ip = args().nth(3).unwrap_or(String::from("localhost"));
-    let socket = UdpSocket::bind((ip, 0)).unwrap();
+fn main() {
+    let cli = Cli::parse();
+
+    let socket = Arc::new(UdpSocket::bind((cli.ip, 0)).unwrap());
+    neo::init_socket(&socket, None);
     let mode = Arc::new(AtomicU8::new(WorkloadMode::Discard as _));
-    let node = Workload::new_benchmark(
+    let mut node = Workload::new_benchmark(
         Client::new(
             random(),
             NodeAddr::Socket(socket.local_addr().unwrap()),
             NodeAddr::Socket(
-                (multicast_ip, 5001)
+                (cli.seq_ip, 5001)
                     .to_socket_addrs()
                     .unwrap()
                     .next()
                     .unwrap(),
             ),
-            f,
+            cli.f,
         ),
         repeat_with::<Box<[u8]>, _>(Default::default),
         mode.clone(),
     );
-    let transport = run(
-        node,
-        TransportConfig {
-            socket,
-            affinity: None,
-            broadcast: Default::default(),
-        },
-    );
+
+    let message_channel = channel::unbounded();
+    let mut rx = udp::Rx(socket.clone());
+    let _rx =
+        spawn(move || rx.deploy(&mut neo::Rx::new(RxMulticast::Reject).then(message_channel.0)));
+
+    let running = Arc::new(AtomicBool::new(false));
+    let node = spawn({
+        let running = running.clone();
+        // no more receiver needed other than the moved one
+        // just keep one receiver always connected to workaround `_rx` thread
+        #[allow(clippy::redundant_clone)]
+        let event_channel = message_channel.1.clone();
+        move || {
+            Lifecycle::new(event_channel, running).deploy(
+                &mut (&mut node).each_then(
+                    neo::Tx {
+                        multicast: Some((cli.seq_ip, 5001).into()),
+                    }
+                    .then(udp::Tx::new(socket)),
+                ),
+            );
+            node
+        }
+    });
 
     sleep(Duration::from_secs(2)); // warm up
     mode.store(WorkloadMode::Benchmark as _, Ordering::SeqCst);
@@ -60,18 +83,15 @@ fn main() {
     mode.store(WorkloadMode::Discard as _, Ordering::SeqCst);
     sleep(Duration::from_secs(2)); // cool down
 
-    let node = transport.stop();
-    let mut latencies = node.latencies;
-
-    writeln!(result, "{}", latencies.len()).unwrap();
+    running.store(false, Ordering::SeqCst);
+    let mut latencies = node.join().unwrap().latencies;
+    println!("{}", latencies.len());
     if !latencies.is_empty() {
         latencies.sort_unstable();
-        writeln!(
-            result,
+        println!(
             "50th {:?} 99th {:?}",
             latencies[latencies.len() / 2],
             latencies[latencies.len() * 99 / 100]
         )
-        .unwrap();
     }
 }

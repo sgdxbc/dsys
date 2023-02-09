@@ -42,10 +42,10 @@ fn main() {
         mode.clone(),
     );
 
-    let event_channel = channel::unbounded();
+    let message_channel = channel::unbounded();
     let mut rx = udp::Rx(socket.clone());
     let _rx =
-        spawn(move || rx.deploy(&mut udp::NodeRx::<Message>::default().then(event_channel.0)));
+        spawn(move || rx.deploy(&mut udp::NodeRx::<Message>::default().then(message_channel.0)));
 
     let running = Arc::new(AtomicBool::new(false));
     let node = spawn({
@@ -53,7 +53,7 @@ fn main() {
         // no more receiver other than the moved one
         // just keep one receiver always connected to workaround `_rx` thread
         #[allow(clippy::redundant_clone)]
-        let event_channel = event_channel.1.clone();
+        let event_channel = message_channel.1.clone();
         move || {
             Lifecycle::new(event_channel, running).deploy(
                 &mut (&mut node).each_then(udp::NodeTx::default().then(udp::Tx::new(socket))),

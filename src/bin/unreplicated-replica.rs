@@ -11,20 +11,10 @@ use dsys::{
     app,
     node::Lifecycle,
     protocol::{Generate, Map},
-    udp,
+    set_affinity, udp,
     unreplicated::{Message, Replica},
     App, Protocol,
 };
-use nix::{
-    sched::{sched_setaffinity, CpuSet},
-    unistd::Pid,
-};
-
-fn set_affinity(affinity: usize) {
-    let mut cpu_set = CpuSet::new();
-    cpu_set.set(affinity).unwrap();
-    sched_setaffinity(Pid::from_raw(0), &cpu_set).unwrap();
-}
 
 fn main() {
     let ip = args().nth(1).unwrap_or(String::from("localhost"));
@@ -32,17 +22,18 @@ fn main() {
     udp::init_socket(&socket);
     let node = Replica::new(App::Null(app::Null));
 
-    let event_channel = channel::unbounded();
+    let message_channel = channel::unbounded();
     let mut rx = udp::Rx(socket.clone());
     let rx = spawn(move || {
         set_affinity(0);
-        rx.deploy(&mut udp::NodeRx::<Message>::default().then(event_channel.0))
+        rx.deploy(&mut udp::NodeRx::<Message>::default().then(message_channel.0))
     });
 
     let effect_channel = channel::unbounded();
     let _node = spawn(move || {
         set_affinity(1);
-        Lifecycle::new(event_channel.1, Default::default()).deploy(&mut node.then(effect_channel.0))
+        Lifecycle::new(message_channel.1, Default::default())
+            .deploy(&mut node.then(effect_channel.0))
     });
 
     // save the last parallelism for IRQ handling
