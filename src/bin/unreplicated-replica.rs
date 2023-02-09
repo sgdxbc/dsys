@@ -44,7 +44,7 @@ fn main() {
         Lifecycle::new(event_channel.1, Default::default()).deploy(&mut node.then(effect_channel.0))
     });
 
-    for i in 2..available_parallelism().unwrap().get() {
+    for i in 2..available_parallelism().unwrap().get() - 1 {
         let mut effect_channel = effect_channel.1.clone();
         let socket = socket.clone();
         let _tx = spawn(move || {

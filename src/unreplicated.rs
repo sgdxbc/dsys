@@ -82,7 +82,7 @@ impl Protocol<ClientEvent<Message>> for Client {
                     return ClientEffect::NOP;
                 }
                 if self.ticked == 2 {
-                    println!("resend");
+                    eprintln!("resend");
                 }
                 let request = Request {
                     client_id: self.id,
