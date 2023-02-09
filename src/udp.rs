@@ -70,7 +70,7 @@ where
         let RxEvent::Receive(buf) = event;
         bincode::options()
             .allow_trailing_bytes()
-            .deserialize(&*buf)
+            .deserialize(&buf)
             .unwrap()
     }
 }

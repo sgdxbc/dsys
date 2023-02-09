@@ -6,7 +6,7 @@ use std::{
 
 use clap::Parser;
 use crossbeam::channel;
-use dsys::{protocol::Generate, udp, Protocol, set_affinity};
+use dsys::{protocol::Generate, set_affinity, udp, Protocol};
 use neo::Sequencer;
 
 #[derive(Debug, Parser)]
@@ -21,16 +21,17 @@ struct Cli {
 
 fn main() {
     let cli = Cli::parse();
-
     let socket = Arc::new(UdpSocket::bind((cli.addr, 5001)).unwrap());
     neo::init_socket(&socket, None); // only send multicast
 
+    // core 0: udp::Rx -> Sequencer -> _chan_
     let mut rx = udp::Rx(socket.clone());
     let channel = channel::unbounded();
     let seq = spawn(move || {
         set_affinity(0);
         rx.deploy(&mut Sequencer::default().then(channel.0))
     });
+    // core 1..: _chan_ ~> SipHash -> udp::Tx
     for i in 1..available_parallelism().unwrap().get() - 1 {
         let mut tx = neo::seq::SipHash {
             channel: channel.1.clone(),

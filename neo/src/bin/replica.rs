@@ -1,12 +1,19 @@
 use std::{
-    env::args,
+    convert::identity,
     net::{IpAddr, Ipv4Addr, UdpSocket},
-    thread::available_parallelism,
+    sync::Arc,
+    thread::{available_parallelism, spawn},
 };
 
 use clap::Parser;
-use dsys::{app, App};
-use neo::Replica;
+use crossbeam::channel;
+use dsys::{
+    app,
+    node::Lifecycle,
+    protocol::{Generate, Map},
+    set_affinity, udp, App, Protocol,
+};
+use neo::{Replica, RxP256};
 
 #[derive(Debug, Parser)]
 struct Cli {
@@ -16,11 +23,61 @@ struct Cli {
     multicast: Ipv4Addr,
     #[clap(long)]
     id: u8,
+    #[clap(long)]
+    signer: String,
 }
 
 fn main() {
     let cli = Cli::parse();
-
+    let socket = Arc::new(UdpSocket::bind((cli.ip, 5000)).unwrap());
+    neo::init_socket(&socket, Some(cli.multicast));
     let node = Replica::new(cli.id, App::Null(app::Null));
-    //
+    let rx = match &*cli.signer {
+        "siphash" => neo::Rx::SipHash { id: cli.id },
+        "p256" => neo::Rx::P256,
+        _ => panic!(),
+    };
+
+    // core 0: udp::Rx -> `rx` -> (_msg_, _p256_)
+    let message_channel = channel::unbounded();
+    let p256_channel = channel::unbounded();
+    let _rx = spawn({
+        let message_channel = message_channel.0.clone();
+        let socket = socket.clone();
+        move || {
+            set_affinity(0);
+            udp::Rx(socket).deploy(
+                &mut rx
+                    .then((message_channel, p256_channel.0))
+                    .then(Map(Into::into)),
+            )
+        }
+    });
+    // core 1: _msg_ ~> Lifecycle -> `node` -> _eff_
+    let effect_channel = channel::unbounded();
+    let node = spawn(move || {
+        set_affinity(1);
+        Lifecycle::new(message_channel.1, Default::default())
+            .deploy(&mut node.then(effect_channel.0))
+    });
+    // core 2..: (_eff_, _p256_) -> (neo::Tx -> udp::Tx, RxP256 -> _msg_)
+    for i in 2..available_parallelism().unwrap().get() - 1 {
+        let socket = socket.clone();
+        let effect_channel = effect_channel.1.clone();
+        let p256_channel = p256_channel.1.clone();
+        let message_channel = message_channel.0.clone();
+        let _work = spawn(move || {
+            set_affinity(i);
+            (effect_channel, p256_channel).deploy(
+                &mut (
+                    Map(identity).each_then(neo::Tx { multicast: None }.then(udp::Tx::new(socket))),
+                    // TODO
+                    RxP256::new(None).then(message_channel),
+                )
+                    .then(Map(Into::into)),
+            )
+        });
+    }
+
+    node.join().unwrap()
 }

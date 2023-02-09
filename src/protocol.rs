@@ -1,4 +1,4 @@
-use crossbeam::channel;
+use crossbeam::{channel, select};
 
 pub trait Protocol<Event> {
     type Effect;
@@ -100,12 +100,12 @@ impl<E> Generate for channel::Receiver<E> {
     }
 }
 
-pub enum Multiplex<A, B> {
+pub enum OneOf<A, B> {
     A(A),
     B(B),
 }
 
-impl<A, B, E> Protocol<E> for Multiplex<A, B>
+impl<A, B, E> Protocol<E> for OneOf<A, B>
 where
     A: Protocol<E>,
     B: Protocol<E, Effect = A::Effect>,
@@ -114,8 +114,8 @@ where
 
     fn update(&mut self, event: E) -> Self::Effect {
         match self {
-            Multiplex::A(protocol) => protocol.update(event),
-            Multiplex::B(protocol) => protocol.update(event),
+            OneOf::A(protocol) => protocol.update(event),
+            OneOf::B(protocol) => protocol.update(event),
         }
     }
 }
@@ -152,5 +152,55 @@ where
             effect_b = effect_b.compose(self.1.update(basic_effect));
         }
         effect_b
+    }
+}
+
+pub enum Multiplex<A, B> {
+    A(A),
+    B(B),
+}
+
+impl<A, B, EventA, EventB> Protocol<Multiplex<EventA, EventB>> for (A, B)
+where
+    A: Protocol<EventA>,
+    B: Protocol<EventB>,
+{
+    type Effect = Multiplex<A::Effect, B::Effect>;
+
+    fn update(&mut self, event: Multiplex<EventA, EventB>) -> Self::Effect {
+        match event {
+            Multiplex::A(event) => Multiplex::A(self.0.update(event)),
+            Multiplex::B(event) => Multiplex::B(self.1.update(event)),
+        }
+    }
+}
+
+impl From<Multiplex<(), ()>> for () {
+    fn from(_: Multiplex<(), ()>) -> Self {}
+}
+
+impl<A, B> Generate for (channel::Receiver<A>, channel::Receiver<B>) {
+    type Event<'a> = Multiplex<A, B>;
+
+    fn deploy<P>(&mut self, protocol: &mut P)
+    where
+        P: for<'a> Protocol<Self::Event<'a>, Effect = ()>,
+    {
+        let mut disconnected = (false, false);
+        while {
+            select! {
+                recv(self.0) -> event => if let Ok(event) = event {
+                    protocol.update(Multiplex::A(event))
+                } else {
+                    disconnected.0 = true;
+                },
+                recv(self.1) -> event => if let Ok(event) = event {
+                    protocol.update(Multiplex::B(event))
+                } else {
+                    disconnected.1 = true;
+                },
+            }
+            disconnected == (true, true)
+        } {}
     }
 }

@@ -155,7 +155,7 @@ mod tests {
     use crate::{
         app,
         node::Workload,
-        protocol::Multiplex,
+        protocol::OneOf,
         simulate, App,
         NodeAddr::{TestClient, TestReplica},
         Simulate,
@@ -168,14 +168,14 @@ mod tests {
         let mut simulate = Simulate::<_, Message>::default();
         simulate.nodes.insert(
             TestClient(0),
-            Multiplex::A(Workload::new_test(
+            OneOf::A(Workload::new_test(
                 Client::new(0, TestClient(0), TestReplica(0)),
                 [b"hello".to_vec()].into_iter(),
             )),
         );
         simulate.nodes.insert(
             TestReplica(0),
-            Multiplex::B(Replica::new(App::Echo(app::Echo))),
+            OneOf::B(Replica::new(App::Echo(app::Echo))),
         );
         simulate.init();
         let mut effect;
@@ -184,7 +184,7 @@ mod tests {
             matches!(effect, simulate::Progress::DeliverMessage)
         } {}
         assert!(matches!(effect, simulate::Progress::Halt));
-        let Multiplex::A(workload) = &simulate.nodes[&TestClient(0)] else {
+        let OneOf::A(workload) = &simulate.nodes[&TestClient(0)] else {
             unreachable!()
         };
         assert_eq!(workload.results.len(), 1);

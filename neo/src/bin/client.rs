@@ -13,10 +13,10 @@ use clap::Parser;
 use crossbeam::channel;
 use dsys::{
     node::{Lifecycle, Workload, WorkloadMode},
-    protocol::Generate,
+    protocol::{Generate, Map},
     udp, NodeAddr, Protocol,
 };
-use neo::{Client, RxMulticast};
+use neo::{Client, RxP256};
 use rand::random;
 
 #[derive(Debug, Parser)]
@@ -31,7 +31,6 @@ struct Cli {
 
 fn main() {
     let cli = Cli::parse();
-
     let socket = Arc::new(UdpSocket::bind((cli.ip, 0)).unwrap());
     neo::init_socket(&socket, None);
     let mode = Arc::new(AtomicU8::new(WorkloadMode::Discard as _));
@@ -52,11 +51,22 @@ fn main() {
         mode.clone(),
     );
 
+    // udp::Rx -> neo::Rx::Reject -> (<unreachable>, RxP256 -> _msg_)
+    // RxP256 here is trivial: client bound replies are not signed
     let message_channel = channel::unbounded();
     let mut rx = udp::Rx(socket.clone());
-    let _rx =
-        spawn(move || rx.deploy(&mut neo::Rx::new(RxMulticast::Reject).then(message_channel.0)));
+    let _rx = spawn(move || {
+        rx.deploy(
+            &mut neo::Rx::Reject
+                .then((
+                    Map(|_| unreachable!()),
+                    RxP256::new(None).then(message_channel.0),
+                ))
+                .then(Map(Into::into)),
+        )
+    });
 
+    // _msg_ ~> Lifecycle -> `node` --> neo::Tx -> udp::Tx
     let running = Arc::new(AtomicBool::new(false));
     let node = spawn({
         let running = running.clone();
