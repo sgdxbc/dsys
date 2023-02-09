@@ -12,7 +12,7 @@ use dsys::{
     node::Lifecycle,
     protocol::{Generate, Map},
     udp,
-    unreplicated::Replica,
+    unreplicated::{Message, Replica},
     App, Protocol,
 };
 use nix::{
@@ -36,7 +36,7 @@ fn main() {
     let mut rx = udp::Rx(socket.clone());
     let rx = spawn(move || {
         set_affinity(0);
-        rx.deploy(&mut udp::NodeRx::default().then(event_channel.0))
+        rx.deploy(&mut udp::NodeRx::<Message>::default().then(event_channel.0))
     });
 
     let effect_channel = channel::unbounded();

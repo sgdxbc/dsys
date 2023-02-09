@@ -15,7 +15,7 @@ use dsys::{
     node::{Lifecycle, Workload, WorkloadMode},
     protocol::Generate,
     udp,
-    unreplicated::Client,
+    unreplicated::{Client, Message},
     NodeAddr, Protocol,
 };
 use rand::random;
@@ -44,7 +44,8 @@ fn main() {
 
     let event_channel = channel::unbounded();
     let mut rx = udp::Rx(socket.clone());
-    let _rx = spawn(move || rx.deploy(&mut udp::NodeRx::default().then(event_channel.0)));
+    let _rx =
+        spawn(move || rx.deploy(&mut udp::NodeRx::<Message>::default().then(event_channel.0)));
 
     let running = Arc::new(AtomicBool::new(false));
     let node = spawn({

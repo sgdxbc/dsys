@@ -69,6 +69,16 @@ impl<E> Protocol<E> for channel::Sender<E> {
     }
 }
 
+impl<E> Protocol<Option<E>> for channel::Sender<E> {
+    type Effect = ();
+
+    fn update(&mut self, event: Option<E>) -> Self::Effect {
+        if let Some(event) = event {
+            self.send(event).unwrap()
+        }
+    }
+}
+
 pub trait Generate {
     type Event<'a>;
 

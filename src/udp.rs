@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     marker::PhantomData,
     net::{SocketAddr, UdpSocket},
     os::fd::AsRawFd,
@@ -15,7 +16,7 @@ use nix::{
 };
 use serde::{de::DeserializeOwned, Serialize};
 
-use crate::{protocol::Generate, NodeAddr, NodeEffect, NodeEvent, Protocol};
+use crate::{protocol::Generate, NodeAddr, NodeEffect, Protocol};
 
 pub fn init_socket(socket: &UdpSocket) {
     socket.set_nonblocking(true).unwrap();
@@ -31,7 +32,24 @@ pub fn init_socket(socket: &UdpSocket) {
 }
 
 pub enum RxEvent<'a> {
-    Receive(&'a mut [u8]),
+    Receive(Cow<'a, [u8]>),
+}
+
+pub struct RxEventOwned(pub RxEvent<'static>);
+
+impl From<RxEvent<'_>> for RxEventOwned {
+    fn from(event: RxEvent<'_>) -> Self {
+        let event = match event {
+            RxEvent::Receive(buf) => RxEvent::Receive(buf.into_owned().into()),
+        };
+        Self(event)
+    }
+}
+
+impl From<RxEventOwned> for RxEvent<'static> {
+    fn from(event: RxEventOwned) -> Self {
+        event.0
+    }
 }
 
 pub struct NodeRx<M>(PhantomData<M>);
@@ -46,15 +64,14 @@ impl<M> Protocol<RxEvent<'_>> for NodeRx<M>
 where
     M: DeserializeOwned,
 {
-    type Effect = NodeEvent<M>;
+    type Effect = M;
 
     fn update(&mut self, event: RxEvent) -> Self::Effect {
         let RxEvent::Receive(buf) = event;
-        let message = bincode::options()
+        bincode::options()
             .allow_trailing_bytes()
-            .deserialize(buf)
-            .unwrap();
-        NodeEvent::Handle(message)
+            .deserialize(&*buf)
+            .unwrap()
     }
 }
 
@@ -77,7 +94,7 @@ impl Generate for Rx {
                 Err(err) => panic_any(err),
                 Ok(_) => {
                     while let Ok((len, _)) = self.0.recv_from(&mut buf) {
-                        protocol.update(RxEvent::Receive(&mut buf[..len]));
+                        protocol.update(RxEvent::Receive(Cow::Borrowed(&buf[..len])));
                     }
                 }
             }

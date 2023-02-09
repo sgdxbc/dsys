@@ -19,7 +19,7 @@ pub struct Replica {
 pub struct LogEntry {
     request: Request,
     seq: u32,
-    signature: [u32; 16],
+    // signature: [u32; 16],
 }
 
 impl Replica {
@@ -59,7 +59,7 @@ impl Protocol<Event> for Replica {
             return Effect::Nop;
         };
         match message {
-            Message::Request(multicast, request) => self.reorder_request(multicast, request),
+            Message::OrderedRequest(multicast, request) => self.reorder_request(multicast, request),
             _ => Effect::Nop,
         }
     }
@@ -89,7 +89,7 @@ impl Replica {
         self.log.push(LogEntry {
             request: request.clone(),
             seq: multicast.seq,
-            signature: multicast.signature,
+            // signature: multicast.signature,
         });
 
         match self.replies.get(&request.client_id) {

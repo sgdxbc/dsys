@@ -105,12 +105,12 @@ impl<M> Composite for ClientEffect<M> {
 }
 
 pub struct Lifecycle<M> {
-    event_channel: channel::Receiver<NodeEvent<M>>,
+    event_channel: channel::Receiver<M>,
     running: Arc<AtomicBool>,
 }
 
 impl<M> Lifecycle<M> {
-    pub fn new(event_channel: channel::Receiver<NodeEvent<M>>, running: Arc<AtomicBool>) -> Self {
+    pub fn new(event_channel: channel::Receiver<M>, running: Arc<AtomicBool>) -> Self {
         Self {
             event_channel,
             running,
@@ -132,8 +132,8 @@ impl<M> Generate for Lifecycle<M> {
         let mut deadline = Instant::now() + Duration::from_millis(10);
         while self.running.load(Ordering::SeqCst) {
             match self.event_channel.recv_deadline(deadline) {
-                Ok(event) => {
-                    node.update(event);
+                Ok(message) => {
+                    node.update(NodeEvent::Handle(message));
                 }
                 Err(channel::RecvTimeoutError::Disconnected) => break,
                 Err(channel::RecvTimeoutError::Timeout) => {

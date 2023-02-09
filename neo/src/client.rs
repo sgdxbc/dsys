@@ -1,14 +1,12 @@
 use std::collections::HashMap;
 
-use bincode::Options;
 use dsys::{
     node::{ClientEffect, ClientEvent},
     protocol::Composite,
     NodeAddr, NodeEffect, NodeEvent, Protocol,
 };
-use sha2::Digest;
 
-use crate::{Message, Multicast, Reply, Request};
+use crate::{Message, Reply, Request};
 
 pub struct Client {
     id: u32,
@@ -83,23 +81,14 @@ impl Protocol<ClientEvent<Message>> for Client {
 
 impl Client {
     fn do_request(&self) -> ClientEffect<Message> {
-        let request = Request {
-            client_id: self.id,
-            client_addr: self.addr,
-            request_num: self.request_num,
-            op: self.op.clone().unwrap(),
-        };
-        let digest = sha2::Sha256::digest(bincode::options().serialize(&request).unwrap()).into();
         ClientEffect::Node(NodeEffect::Send(
             self.multicast_addr,
-            Message::Request(
-                Multicast {
-                    seq: 0,
-                    signature: Default::default(),
-                    digest,
-                },
-                request,
-            ),
+            Message::Request(Request {
+                client_id: self.id,
+                client_addr: self.addr,
+                request_num: self.request_num,
+                op: self.op.clone().unwrap(),
+            }),
         ))
     }
 }
