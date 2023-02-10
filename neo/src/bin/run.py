@@ -1,63 +1,110 @@
 #!/usr/bin/env python3
-from tempfile import TemporaryDirectory
-from pyrem.host import RemoteHost
-from pyrem.task import Parallel
+from asyncio import create_subprocess_exec, gather, sleep
+from subprocess import PIPE
+from sys import stderr
 
+async def remote(address, args, stdout=None, stderr=None):
+    return await create_subprocess_exec(
+        'ssh', '-q', address, *args, stdout=stdout, stderr=stderr)
 
-def run(replica_count, client_count):
-    with open("addresses.txt") as addresses:
-        replica_addresses, client_addresses, seq_address = [], [], None
+async def remote_sync(address, args):
+    p = await remote(address, args)
+    await p.wait()
+    return p.returncode
+
+async def evaluate(replica_count, client_count, crypto):
+    with open('addresses.txt') as addresses:
+        seq_address = None
+        replica_addresses, client_addresses = [], []
         for line in addresses:
             [role, address] = line.split()
-            if role == "seq":
-                assert not seq_address
-                seq_address = address
-            if role == "replica" and len(replica_addresses) < replica_count:
+            if role == 'replica' and len(replica_addresses) < replica_count:
                 replica_addresses.append(address)
-            if role == "client" and len(client_addresses) < client_count:
+            if role == 'client' and len(client_addresses) < client_count:
                 client_addresses.append(address)
+            if role == 'seq':
+                seq_address = seq_address or address
+    assert seq_address is not None
+    assert len(replica_addresses) == replica_count
+    assert len(client_addresses) == client_count
+    f = (replica_count - 1) // 3
 
-    assert seq_address
-    seq_command = ["./neo-seq", "--addr", seq_address]
-    for replica in replica_addresses:
-        seq_command.extend(["--broadcast", replica])
-    seq = RemoteHost(seq_address).run(seq_command, quiet=True)
-    seq.start()
-    replicas = Parallel([
-        RemoteHost(replica).run(["./neo-replica", str(i), replica], quiet=True)
-        for i, replica in enumerate(replica_addresses)])
-    replicas.start()
+    print('clean up', file=stderr)
+    await gather(*[
+        remote_sync(address, ['pkill', 'neo'])
+        for address in client_addresses + replica_addresses + [seq_address]])
 
-    f = (len(replica_addresses) - 1) // 3
-    Parallel([
-        RemoteHost(client).run(["./neo-client", str(f), client, seq_address], quiet=True)
-        for client in client_addresses]
-    ).start(wait=True)
+    print('launch sequencer', file=stderr)
+    await remote_sync(
+        seq_address, [
+            'tmux', 'new-session', '-d', '-s', 'neo', 
+            './neo-seq', 
+                '--multicast', '239.255.1.1', 
+                '--replica-count', str(replica_count),
+                '--crypto', crypto])
 
-    seq.stop()
-    replicas.stop()
+    print('launch replicas', file=stderr)
+    await gather(*[remote_sync(
+        replica_address, [
+            'tmux', 'new-session', '-d', '-s', 'neo', 
+            './neo-replica', 
+                '--id', str(i), 
+                '--multicast', '239.255.1.1', 
+                '-f', str(f), 
+                '--crypto', crypto])
+        for i, replica_address in enumerate(replica_addresses)])
 
+    print('wait longer for replicas to join multicast group', file=stderr)
+    await sleep(5)
+
+    print('launch clients', file=stderr)
+    clients = [
+        await remote(
+            client_address, [
+                './neo-client', '--seq-ip', seq_address, '-f', str(f)], 
+            stdout=PIPE, stderr=PIPE)
+        for client_address in client_addresses]
+
+    print('wait clients', end='', flush=True, file=stderr)
+    for client in clients:
+        await client.wait()
+        print('.', end='', flush=True)
+    print()
+
+    # capture output before interrupt?
+    print('interrupt seq and replicas', file=stderr)
+    await gather(*[
+        remote_sync(address, ['tmux', 'send-key', '-t', 'neo', 'C-c'])
+        for address in replica_addresses + [seq_address]])
+    
     count = 0
-    output_latency = True
-    with TemporaryDirectory() as workspace:
-        Parallel([
-            RemoteHost(client).get_file("result.txt", f"{workspace}/{client}.txt", quiet=True)
-            for client in client_addresses]
-        ).start(wait=True)
-        for client in client_addresses:
-            with open(f"{workspace}/{client}.txt") as result:
-                result = result.read()
-                if not result:
-                    raise Exception("Result incomplete")
-                [client_count, latency] = result.splitlines()
-                if output_latency:
-                    print(latency)
-                    output_latency = False
-                count += int(client_count)
+    output_lantecy = True
+    for client in clients:
+        out, err = await client.communicate()
+        if client.returncode != 0:
+            count = None
+            print(err.decode())
+        if count is None:
+            continue
+        [client_count, latency] = out.decode().splitlines()
+        count += int(client_count)
+        if output_lantecy:
+            print(latency)
+            output_lantecy = False
+    if count is not None:
         print(count / 10)
 
+    print('clean up', file=stderr)
+    await gather(*[
+        remote_sync(address, ['pkill', 'neo'])
+        for address in client_addresses + replica_addresses + [seq_address]])
 
-# for client_count in [1, 2, 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]:
-for replica_count, client_count in [(4, 10)]:
-    print(replica_count, client_count)
-    run(replica_count, client_count)
+if __name__ == '__main__':
+    from sys import argv
+    from asyncio import run
+    if argv[1:2] == ['test']:
+        run(evaluate(1, 1, argv[2]))
+    else:
+        for client_count in [1, 2, 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]:
+            print(client_count)
+            run(evaluate(client_count))

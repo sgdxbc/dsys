@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-from asyncio import create_subprocess_exec, run, gather, sleep
+from asyncio import create_subprocess_exec, gather, sleep
 from subprocess import PIPE
-from sys import stderr, argv
+from sys import stderr
 
 async def remote(address, args, stdout=None, stderr=None):
     return await create_subprocess_exec(
@@ -12,7 +12,7 @@ async def remote_sync(address, args):
     await p.wait()
     return p.returncode
 
-async def eval(client_count):
+async def evaluate(client_count):
     with open('addresses.txt') as addresses:
         replica_address = None
         client_addresses = []
@@ -32,10 +32,9 @@ async def eval(client_count):
         for client_address in client_addresses])
 
     print('launch replica', file=stderr)
-    replica = await remote(
+    await remote_sync(
         replica_address, 
         ['tmux', 'new-session', '-d', '-s', 'unreplicated', './unreplicated-replica'])
-    await replica.wait()
     await sleep(1)
 
     print('launch clients', file=stderr)
@@ -54,8 +53,7 @@ async def eval(client_count):
 
     # capture output before interrupt?
     print('interrupt replica', file=stderr)
-    replica = await remote(replica_address, ['tmux', 'send-key', '-t', 'unreplicated', 'C-c'])
-    await replica.wait()
+    await remote_sync(replica_address, ['tmux', 'send-key', '-t', 'unreplicated', 'C-c'])
 
     count = 0
     output_lantecy = True
@@ -80,9 +78,12 @@ async def eval(client_count):
         remote_sync(client_address, ['pkill', 'unreplicated'])
         for client_address in client_addresses])
 
-if argv[1:2] == ['test']:
-    run(eval(1))
-else:
-    for client_count in [1, 2, 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]:
-        print(client_count)
-        run(eval(client_count))
+if __name__ == '__main__':
+    from sys import argv
+    from asyncio import run
+    if argv[1:2] == ['test']:
+        run(evaluate(1))
+    else:
+        for client_count in [1, 2, 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]:
+            print(client_count)
+            run(evaluate(client_count))
