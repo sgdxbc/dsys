@@ -1,5 +1,4 @@
 use std::{
-    mem::replace,
     net::SocketAddr,
     sync::{
         atomic::{AtomicBool, AtomicU8, Ordering},
@@ -32,44 +31,8 @@ pub enum NodeEvent<M> {
 
 #[derive(Debug)]
 pub enum NodeEffect<M> {
-    Nop,
     Send(NodeAddr, M),
     Broadcast(M),
-    Compose(Vec<NodeEffect<M>>),
-}
-
-impl<M> Composite for NodeEffect<M> {
-    const NOP: Self = Self::Nop;
-
-    fn compose(self, other: Self) -> Self {
-        match (self, other) {
-            (Self::Nop, Self::Nop) => Self::Nop,
-            (Self::Nop, effect) | (effect, Self::Nop) => effect,
-            (Self::Compose(mut effects), Self::Compose(other_effects)) => {
-                effects.extend(other_effects);
-                Self::Compose(effects)
-            }
-            (Self::Compose(mut effects), effect) | (effect, Self::Compose(mut effects)) => {
-                effects.push(effect);
-                Self::Compose(effects)
-            }
-            (effect, other_effect) => Self::Compose(vec![effect, other_effect]),
-        }
-    }
-
-    fn decompose(&mut self) -> Option<Self> {
-        match self {
-            Self::Nop => None,
-            Self::Compose(effects) if effects.len() > 1 => Some(effects.pop().unwrap()),
-            Self::Compose(effects) => {
-                // any better way?
-                let effect = effects.pop().unwrap();
-                drop(replace(self, Self::Nop));
-                Some(effect)
-            }
-            _ => Some(replace(self, Self::Nop)),
-        }
-    }
 }
 
 pub enum ClientEvent<M> {
@@ -80,28 +43,6 @@ pub enum ClientEvent<M> {
 pub enum ClientEffect<M> {
     Result(Box<[u8]>),
     Node(NodeEffect<M>),
-}
-
-impl<M> Composite for ClientEffect<M> {
-    const NOP: Self = Self::Node(NodeEffect::NOP);
-
-    fn compose(self, other: Self) -> Self {
-        match (self, other) {
-            (Self::Result(result), Self::Node(NodeEffect::Nop))
-            | (Self::Node(NodeEffect::Nop), Self::Result(result)) => Self::Result(result),
-            (Self::Node(NodeEffect::Nop), Self::Node(NodeEffect::Nop)) => {
-                Self::Node(NodeEffect::Nop)
-            }
-            _ => panic!(),
-        }
-    }
-
-    fn decompose(&mut self) -> Option<Self> {
-        match self {
-            Self::Result(_) => Some(replace(self, Self::Node(NodeEffect::Nop))),
-            Self::Node(effect) => effect.decompose().map(Self::Node),
-        }
-    }
 }
 
 pub struct Lifecycle<M> {
@@ -189,28 +130,31 @@ impl<N, I> Workload<N, I> {
         }
     }
 
-    fn work<M, O>(&mut self) -> NodeEffect<M>
+    fn work<M, O>(&mut self) -> Vec<NodeEffect<M>>
     where
-        N: Protocol<ClientEvent<M>, Effect = ClientEffect<M>>,
+        N: Protocol<ClientEvent<M>>,
+        N::Effect: Composite<Atom = ClientEffect<M>>,
         I: Iterator<Item = O>,
         O: Into<Box<[u8]>>,
     {
         if let Some(op) = self.ops.next() {
             self.instant = Instant::now();
-            if let ClientEffect::Node(effect) = self.node.update(ClientEvent::Op(op.into())) {
-                effect
-            } else {
-                panic!()
-            }
+            self.node.update(ClientEvent::Op(op.into())).map(|effect| {
+                if let ClientEffect::Node(effect) = effect {
+                    Vec::<_>::pure(effect)
+                } else {
+                    panic!()
+                }
+            })
         } else {
-            // record finished?
-            NodeEffect::Nop
+            Vec::<_>::NOP // record finished?
         }
     }
 
-    fn process_effect<M, O>(&mut self, effect: ClientEffect<M>) -> NodeEffect<M>
+    fn process_effect<M, O>(&mut self, effect: ClientEffect<M>) -> Vec<NodeEffect<M>>
     where
-        N: Protocol<ClientEvent<M>, Effect = ClientEffect<M>>,
+        N: Protocol<ClientEvent<M>>,
+        N::Effect: Composite<Atom = ClientEffect<M>>,
         I: Iterator<Item = O>,
         O: Into<Box<[u8]>>,
     {
@@ -225,23 +169,26 @@ impl<N, I> Workload<N, I> {
                 // TODO able to throttle
                 self.work()
             }
-            ClientEffect::Node(effect) => effect,
+            ClientEffect::Node(effect) => Vec::<_>::pure(effect),
         }
     }
 }
 
 impl<N, I, O, M> Protocol<NodeEvent<M>> for Workload<N, I>
 where
-    N: Protocol<ClientEvent<M>, Effect = ClientEffect<M>>,
+    N: Protocol<ClientEvent<M>>,
+    N::Effect: Composite<Atom = ClientEffect<M>>,
     I: Iterator<Item = O>,
     O: Into<Box<[u8]>>,
 {
-    type Effect = NodeEffect<M>;
+    type Effect = Vec<NodeEffect<M>>;
 
     fn update(&mut self, event: NodeEvent<M>) -> Self::Effect {
         let is_init = matches!(event, NodeEvent::Init);
-        let effect = self.node.update(ClientEvent::Node(event));
-        let mut effect = self.process_effect(effect);
+        let mut effect = self
+            .node
+            .update(ClientEvent::Node(event))
+            .map(|effect| self.process_effect(effect));
         if is_init {
             effect = effect.compose(self.work());
         }

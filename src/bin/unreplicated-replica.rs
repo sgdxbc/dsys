@@ -40,9 +40,8 @@ fn main() {
         let socket = socket.clone();
         let _tx = spawn(move || {
             set_affinity(i);
-            effect_channel.deploy(
-                &mut Map(identity).each_then(udp::NodeTx::default().then(udp::Tx::new(socket))),
-            )
+            effect_channel
+                .deploy(&mut Map(identity).then(udp::NodeTx::default().then(udp::Tx::new(socket))))
         });
     }
 

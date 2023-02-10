@@ -3,7 +3,7 @@ use std::{
     ops::{Index, IndexMut},
 };
 
-use dsys::{protocol::Composite, App, Protocol};
+use dsys::{protocol::Composite, App, NodeEffect, Protocol};
 
 use crate::{Message, Multicast, Reply, Request};
 
@@ -64,18 +64,18 @@ impl IndexMut<u32> for Replica {
 }
 
 type Event = dsys::NodeEvent<Message>;
-type Effect = dsys::NodeEffect<Message>;
+type Effect = Vec<dsys::NodeEffect<Message>>;
 
 impl Protocol<Event> for Replica {
     type Effect = Effect;
 
     fn update(&mut self, event: Event) -> Self::Effect {
         let Event::Handle(message) = event else {
-            return Effect::Nop;
+            return Effect::NOP;
         };
         match message {
             Message::OrderedRequest(multicast, request) => self.reorder_request(multicast, request),
-            _ => Effect::Nop,
+            _ => Effect::NOP,
         }
     }
 }
@@ -108,7 +108,7 @@ impl Replica {
                 .entry(multicast.seq)
                 .or_default()
                 .push((multicast, request));
-            return Effect::Nop;
+            return Effect::NOP;
         }
 
         let mut effect = self.handle_request(multicast, request);
@@ -129,7 +129,7 @@ impl Replica {
         }
         if request != self[multicast.seq].request {
             //
-            return Effect::Nop;
+            return Effect::NOP;
         }
         match self.multicast_crypto {
             MulticastCrypto::P256 => {
@@ -156,13 +156,16 @@ impl Replica {
             }
         }
         if !self.multicast_complete(multicast.seq) {
-            return Effect::Nop;
+            return Effect::NOP;
         }
 
         match self.replies.get(&request.client_id) {
-            Some(reply) if reply.request_num > request.request_num => return Effect::Nop,
+            Some(reply) if reply.request_num > request.request_num => return Effect::NOP,
             Some(reply) if reply.request_num == request.request_num => {
-                return Effect::Send(request.client_addr, Message::Reply(reply.clone()))
+                return Effect::pure(NodeEffect::Send(
+                    request.client_addr,
+                    Message::Reply(reply.clone()),
+                ))
             }
             _ => {}
         }
@@ -175,6 +178,6 @@ impl Replica {
             seq: multicast.seq,
         };
         self.replies.insert(request.client_id, reply.clone());
-        Effect::Send(request.client_addr, Message::Reply(reply))
+        Effect::pure(NodeEffect::Send(request.client_addr, Message::Reply(reply)))
     }
 }

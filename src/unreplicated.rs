@@ -5,7 +5,6 @@ use serde::{Deserialize, Serialize};
 use crate::{
     app::App,
     node::{ClientEffect, ClientEvent},
-    protocol::Composite,
     NodeAddr, NodeEffect, NodeEvent, Protocol,
 };
 
@@ -53,7 +52,7 @@ impl Client {
 }
 
 impl Protocol<ClientEvent<Message>> for Client {
-    type Effect = ClientEffect<Message>;
+    type Effect = Option<ClientEffect<Message>>;
 
     fn update(&mut self, event: ClientEvent<Message>) -> Self::Effect {
         match event {
@@ -68,19 +67,19 @@ impl Protocol<ClientEvent<Message>> for Client {
                     seq: self.seq,
                     op,
                 };
-                ClientEffect::Node(NodeEffect::Send(
+                Some(ClientEffect::Node(NodeEffect::Send(
                     self.replica_addr,
                     Message::Request(request),
-                ))
+                )))
             }
-            ClientEvent::Node(NodeEvent::Init) => ClientEffect::NOP,
+            ClientEvent::Node(NodeEvent::Init) => None,
             ClientEvent::Node(NodeEvent::Tick) => {
                 let Some(op) = &self.op else {
-                    return ClientEffect::NOP;
+                    return None;
                 };
                 self.ticked += 1;
                 if self.ticked == 1 {
-                    return ClientEffect::NOP;
+                    return None;
                 }
                 if self.ticked == 2 {
                     eprintln!("resend");
@@ -91,17 +90,17 @@ impl Protocol<ClientEvent<Message>> for Client {
                     seq: self.seq,
                     op: op.clone(),
                 };
-                ClientEffect::Node(NodeEffect::Send(
+                Some(ClientEffect::Node(NodeEffect::Send(
                     self.replica_addr,
                     Message::Request(request),
-                ))
+                )))
             }
             ClientEvent::Node(NodeEvent::Handle(Message::Reply(reply))) => {
                 if self.op.is_none() || reply.seq != self.seq {
-                    return ClientEffect::NOP;
+                    return None;
                 }
                 self.op = None;
-                ClientEffect::Result(reply.result)
+                Some(ClientEffect::Result(reply.result))
             }
             _ => unreachable!(),
         }
@@ -125,18 +124,21 @@ impl Replica {
 }
 
 impl Protocol<NodeEvent<Message>> for Replica {
-    type Effect = NodeEffect<Message>;
+    type Effect = Option<NodeEffect<Message>>;
 
     fn update(&mut self, event: NodeEvent<Message>) -> Self::Effect {
         let request = match event {
             NodeEvent::Handle(Message::Request(request)) => request,
-            NodeEvent::Init | NodeEvent::Tick => return NodeEffect::NOP,
+            NodeEvent::Init | NodeEvent::Tick => return None,
             _ => unreachable!(),
         };
         match self.replies.get(&request.client_id) {
-            Some(reply) if reply.seq > request.seq => return NodeEffect::NOP,
+            Some(reply) if reply.seq > request.seq => return None,
             Some(reply) if reply.seq == request.seq => {
-                return NodeEffect::Send(request.client_addr, Message::Reply(reply.clone()))
+                return Some(NodeEffect::Send(
+                    request.client_addr,
+                    Message::Reply(reply.clone()),
+                ))
             }
             _ => {}
         }
@@ -147,7 +149,7 @@ impl Protocol<NodeEvent<Message>> for Replica {
             result,
         };
         self.replies.insert(request.client_id, reply.clone());
-        NodeEffect::Send(request.client_addr, Message::Reply(reply))
+        Some(NodeEffect::Send(request.client_addr, Message::Reply(reply)))
     }
 }
 
@@ -156,10 +158,10 @@ mod tests {
     use crate::{
         app,
         node::Workload,
-        protocol::OneOf,
+        protocol::{Map, OneOf},
         simulate, App,
         NodeAddr::{TestClient, TestReplica},
-        Simulate,
+        Protocol, Simulate,
     };
 
     use super::{Client, Message, Replica};
@@ -174,9 +176,13 @@ mod tests {
                 [b"hello".to_vec()].into_iter(),
             )),
         );
-        simulate
-            .nodes
-            .insert(TestReplica(0), OneOf::B(Replica::new(App::Echo(app::Echo))));
+        simulate.nodes.insert(
+            TestReplica(0),
+            OneOf::B(
+                Replica::new(App::Echo(app::Echo))
+                    .then(Map(|effect: Option<_>| effect.into_iter().collect())),
+            ),
+        );
         simulate.init();
         let mut effect;
         while {

@@ -124,16 +124,15 @@ where
 
     fn update(&mut self, event: NodeEffect<M>) -> Self::Effect {
         match event {
-            NodeEffect::Nop => TxEvent::Nop,
             NodeEffect::Send(NodeAddr::Socket(addr), message) => {
                 let buf = bincode::options().serialize(&message).unwrap().into();
                 TxEvent::Send(addr, buf)
             }
+            NodeEffect::Send(..) => panic!(),
             NodeEffect::Broadcast(message) => {
                 let buf = bincode::options().serialize(&message).unwrap().into();
                 TxEvent::Broadcast(buf)
             }
-            _ => unreachable!(),
         }
     }
 }

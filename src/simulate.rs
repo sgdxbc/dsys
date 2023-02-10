@@ -26,7 +26,8 @@ impl<N, M> Default for Simulate<N, M> {
 impl<N, M> Simulate<N, M> {
     pub fn init(&mut self)
     where
-        N: Protocol<NodeEvent<M>, Effect = NodeEffect<M>>,
+        N: Protocol<NodeEvent<M>>,
+        N::Effect: Composite<Atom = NodeEffect<M>>,
     {
         for effect in self
             .nodes
@@ -40,7 +41,8 @@ impl<N, M> Simulate<N, M> {
 
     pub fn progress(&mut self) -> Progress
     where
-        N: Protocol<NodeEvent<M>, Effect = NodeEffect<M>>,
+        N: Protocol<NodeEvent<M>>,
+        N::Effect: Composite<Atom = NodeEffect<M>>,
     {
         let Some((destination, message)) = self.messages.pop_front() else {
             return Progress::Halt;
@@ -56,19 +58,19 @@ impl<N, M> Simulate<N, M> {
 
     pub fn tick(&mut self, addr: NodeAddr)
     where
-        N: Protocol<NodeEvent<M>, Effect = NodeEffect<M>>,
+        N: Protocol<NodeEvent<M>>,
+        N::Effect: Composite<Atom = NodeEffect<M>>,
     {
         *self.tick_count.entry(addr).or_default() += 1;
         let effect = self.nodes.get_mut(&addr).unwrap().update(NodeEvent::Tick);
         self.push_effect(effect);
     }
 
-    fn push_effect(&mut self, mut effect: NodeEffect<M>) {
+    fn push_effect(&mut self, mut effect: impl Composite<Atom = NodeEffect<M>>) {
         while let Some(basic_effect) = effect.decompose() {
             match basic_effect {
                 NodeEffect::Send(address, message) => self.messages.push_back((address, message)),
                 NodeEffect::Broadcast(_) => todo!(),
-                _ => unreachable!(),
             }
         }
     }

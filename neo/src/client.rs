@@ -2,7 +2,6 @@ use std::collections::HashMap;
 
 use dsys::{
     node::{ClientEffect, ClientEvent},
-    protocol::Composite,
     NodeAddr, NodeEffect, NodeEvent, Protocol,
 };
 
@@ -35,7 +34,7 @@ impl Client {
 }
 
 impl Protocol<ClientEvent<Message>> for Client {
-    type Effect = ClientEffect<Message>;
+    type Effect = Option<ClientEffect<Message>>;
 
     fn update(&mut self, event: ClientEvent<Message>) -> Self::Effect {
         match event {
@@ -44,34 +43,32 @@ impl Protocol<ClientEvent<Message>> for Client {
                 self.op = Some(op);
                 self.request_num += 1;
                 self.ticked = 0;
-                self.do_request()
+                Some(self.do_request())
             }
-            ClientEvent::Node(NodeEvent::Init) => ClientEffect::NOP,
+            ClientEvent::Node(NodeEvent::Init) => None,
             ClientEvent::Node(NodeEvent::Tick) => {
-                if self.op.is_none() {
-                    return ClientEffect::NOP;
-                };
+                self.op.as_ref()?;
                 self.ticked += 1;
                 if self.ticked == 1 {
-                    return ClientEffect::NOP;
+                    return None;
                 }
                 if self.ticked == 2 {
                     eprintln!("resend");
                 }
-                self.do_request()
+                Some(self.do_request())
             }
             ClientEvent::Node(NodeEvent::Handle(Message::Reply(reply))) => {
                 if self.op.is_none() || reply.request_num != self.request_num {
-                    return ClientEffect::NOP;
+                    return None;
                 }
                 self.results.insert(reply.replica_id, reply.clone());
                 // TODO properly check safety
                 if self.results.len() == 2 * self.f + 1 {
                     self.results.drain();
                     self.op = None;
-                    ClientEffect::Result(reply.result)
+                    Some(ClientEffect::Result(reply.result))
                 } else {
-                    ClientEffect::NOP
+                    None
                 }
             }
             ClientEvent::Node(NodeEvent::Handle(_)) => unreachable!(),

@@ -8,7 +8,6 @@ pub trait Protocol<Event> {
     fn then<P>(self, other: P) -> Then<Self, P>
     where
         Self: Sized,
-        P: Protocol<Self::Effect>,
     {
         Then(self, other)
     }
@@ -16,25 +15,87 @@ pub trait Protocol<Event> {
     fn each_then<P>(self, other: P) -> EachThen<Self, P>
     where
         Self: Sized,
-        P: Protocol<Self::Effect>,
     {
         EachThen(self, other)
     }
 }
 
 pub trait Composite: Sized {
+    type Atom;
+
     const NOP: Self;
+
+    fn pure(event: Self::Atom) -> Self;
+
     fn compose(self, other: Self) -> Self;
-    fn decompose(&mut self) -> Option<Self>;
+
+    fn decompose(&mut self) -> Option<Self::Atom>;
+
+    // more like a flat map
+    fn map<T>(mut self, mut f: impl FnMut(Self::Atom) -> T) -> T
+    where
+        T: Composite,
+    {
+        let mut result = T::NOP;
+        while let Some(atom) = self.decompose() {
+            result = result.compose(f(atom));
+        }
+        result
+    }
 }
 
 impl Composite for () {
+    type Atom = ();
+
     const NOP: Self = ();
+
+    fn pure((): Self::Atom) -> Self {}
 
     fn compose(self, _: Self) -> Self {}
 
-    fn decompose(&mut self) -> Option<Self> {
+    fn decompose(&mut self) -> Option<Self::Atom> {
         None
+    }
+}
+
+impl<E> Composite for Option<E> {
+    type Atom = E;
+
+    const NOP: Self = None;
+
+    fn pure(event: Self::Atom) -> Self {
+        Some(event)
+    }
+
+    fn compose(self, other: Self) -> Self {
+        match (self, other) {
+            (None, None) => None,
+            (Some(event), None) | (None, Some(event)) => Some(event),
+            (Some(_), Some(_)) => panic!(),
+        }
+    }
+
+    fn decompose(&mut self) -> Option<Self::Atom> {
+        self.take()
+    }
+}
+
+impl<E> Composite for Vec<E> {
+    type Atom = E;
+
+    const NOP: Self = Vec::new();
+
+    fn pure(event: Self::Atom) -> Self {
+        vec![event]
+    }
+
+    fn compose(mut self, other: Self) -> Self {
+        self.extend(other);
+        self
+    }
+
+    fn decompose(&mut self) -> Option<Self::Atom> {
+        self.pop()
     }
 }
 
@@ -100,6 +161,14 @@ impl<E> Generate for channel::Receiver<E> {
     }
 }
 
+pub trait ReactiveGenerate<E> {
+    type Event; // add a lifetime parameter here when figure out how to do it
+
+    fn update<P>(&mut self, event: E, protocol: &mut P)
+    where
+        P: Protocol<Self::Event, Effect = ()>;
+}
+
 pub enum OneOf<A, B> {
     A(A),
     B(B),
@@ -139,7 +208,7 @@ pub struct EachThen<A, B>(A, B);
 impl<A, B, E> Protocol<E> for EachThen<A, B>
 where
     A: Protocol<E>,
-    B: Protocol<A::Effect>,
+    B: Protocol<<A::Effect as Composite>::Atom>,
     A::Effect: Composite,
     B::Effect: Composite,
 {
@@ -202,5 +271,25 @@ impl<A, B> Generate for (channel::Receiver<A>, channel::Receiver<B>) {
             }
             disconnected == (true, true)
         } {}
+    }
+}
+
+pub struct GenerateThen<A, B>(A, B);
+
+impl<A, B> Generate for GenerateThen<A, B>
+where
+    A: Generate,
+    B: for<'a> ReactiveGenerate<A::Event<'a>>,
+{
+    // is this lifetime correct?
+    type Event<'a> = <B as ReactiveGenerate<A::Event<'a>>>::Event;
+
+    fn deploy<P>(&mut self, mut protocol: &mut P)
+    where
+        P: for<'a> Protocol<Self::Event<'a>, Effect = ()>,
+    {
+        self.0.deploy(&mut Map(|event: A::Event<'_>| {
+            self.1.update(event, &mut protocol)
+        }))
     }
 }
