@@ -41,10 +41,11 @@ impl Generate for SipHash {
     where
         P: for<'a> Protocol<Self::Event<'a>, Effect = ()>,
     {
-        for mut buf in self.channel.iter() {
+        for buf in self.channel.iter() {
             let mut signatures = [0; 16];
             let mut i = 0;
             while i < self.replica_count {
+                let mut buf = buf.clone();
                 for j in i..u32::min(i + 4, self.replica_count) {
                     let mut hasher = SipHasher::new_with_keys(u64::MAX, j as _);
                     buf[..32].hash(&mut hasher);
@@ -53,9 +54,9 @@ impl Generate for SipHash {
                         .copy_from_slice(&hasher.finish().to_le_bytes()[..4]);
                     // println!("signature[{j}] {:02x?}", &signatures[offset..offset + 4]);
                 }
-                buf[4..8].copy_from_slice(&i.to_be_bytes());
-                buf[8..24].copy_from_slice(&signatures);
-                protocol.update(TxEvent::Send(self.multicast_addr, buf.clone()));
+                buf[4..20].copy_from_slice(&signatures);
+                buf[64..68].copy_from_slice(&i.to_be_bytes());
+                protocol.update(TxEvent::Send(self.multicast_addr, buf));
                 i += 4;
             }
         }

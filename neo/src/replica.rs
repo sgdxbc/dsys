@@ -126,21 +126,22 @@ impl Replica {
             eprintln!("multicast request mismatch");
             return Effect::NOP;
         }
+        use MulticastSignature::*;
         match self.multicast_crypto {
             MulticastCrypto::P256 => {
                 self.multicast_signatures
-                    .insert(multicast.seq, MulticastSignature::P256(multicast.signature));
+                    .insert(multicast.seq, P256(multicast.signature));
             }
             MulticastCrypto::SipHash { .. } => {
-                let MulticastSignature::SipHash(signatures) = self.multicast_signatures
+                let SipHash(signatures) = self.multicast_signatures
                     .entry(multicast.seq)
-                    .or_insert(MulticastSignature::SipHash(Default::default()))
+                    .or_insert(SipHash(Default::default()))
                 else {
                     unreachable!()
                 };
-                let i = u32::from_be_bytes(multicast.signature[0][..4].try_into().unwrap()) as u8;
+                let i = u32::from_be_bytes(multicast.signature[1][28..].try_into().unwrap()) as u8;
                 for j in i..u8::min(i + 4, (3 * self.f + 1) as _) {
-                    let offset = 4 + (j - i) as usize * 4;
+                    let offset = (j - i) as usize * 4;
                     signatures.insert(
                         j,
                         multicast.signature[0][offset..offset + 4]
@@ -151,18 +152,18 @@ impl Replica {
             }
         }
         if !self.multicast_complete(multicast.seq) {
-            // println!("multicast not complete");
+            // println!("incomplete");
             return Effect::NOP;
         }
 
         // dbg!(&request);
+        // println!("complete");
         match self.replies.get(&request.client_id) {
             Some(reply) if reply.request_num > request.request_num => return Effect::NOP,
             Some(reply) if reply.request_num == request.request_num => {
-                return Effect::pure(NodeEffect::Send(
-                    request.client_addr,
-                    Message::Reply(reply.clone()),
-                ))
+                let mut reply = reply.clone();
+                reply.seq = multicast.seq;
+                return Effect::pure(NodeEffect::Send(request.client_addr, Message::Reply(reply)));
             }
             _ => {}
         }

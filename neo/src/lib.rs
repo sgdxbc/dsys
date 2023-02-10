@@ -88,10 +88,10 @@ pub enum RxP256Event {
 // + 64 bytes signature
 // + bincode format `Message`
 // (Half)SipHash signature:
-// + 4 bytes index of the first MAC
 // + 4 bytes MAC1
 // + (optional) 4 bytes each MAC2, MAC3, MAC4
-// + pad to 64 bytes
+// + pad to 60 bytes
+// + 4 bytes index of the first MAC
 // secp256k1 signature: 64 bytes compact format
 
 impl Message {
@@ -123,20 +123,20 @@ impl Protocol<RxEvent<'_>> for Rx {
         if buf[..4] == [0; 4] {
             return Multiplex::B(RxP256Event::Unicast(buf[4..].into()));
         }
-        let mut digest = <[u8; 32]>::from(sha2::Sha256::digest(&buf[68..]));
-        digest[..4].copy_from_slice(&buf[..4]);
         match self {
             Rx::UnicastOnly => Multiplex::A(None),
             Rx::Multicast(MulticastCrypto::P256) => {
                 Multiplex::B(RxP256Event::Multicast(buf.into()))
             }
             Rx::Multicast(MulticastCrypto::SipHash { id }) => {
-                let i = u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]) as u8;
+                let mut digest = <[u8; 32]>::from(sha2::Sha256::digest(&buf[68..]));
+                digest[..4].copy_from_slice(&buf[..4]);
+                let i = u32::from_be_bytes(buf[64..68].try_into().unwrap()) as u8;
                 if (i..i + 4).contains(id) {
                     let mut hasher = SipHasher::new_with_keys(u64::MAX, *id as _);
                     digest.hash(&mut hasher);
                     let expect = &hasher.finish().to_le_bytes()[..4];
-                    let offset = (8 + (*id - i)) as usize;
+                    let offset = 4 + (*id - i) as usize * 4;
                     if &buf[offset..offset + 4] != expect {
                         eprintln!(
                             "malformed (siphash) expect {expect:02x?} actual {:02x?}",

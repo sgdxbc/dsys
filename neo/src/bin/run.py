@@ -54,8 +54,8 @@ async def evaluate(replica_count, client_count, crypto):
                 '--crypto', crypto])
         for i, replica_address in enumerate(replica_addresses)])
 
-    print('wait longer for replicas to join multicast group', file=stderr)
-    await sleep(5)
+    print('wait replicas to join multicast group', file=stderr)
+    await sleep(10)
 
     print('launch clients', file=stderr)
     clients = [
@@ -72,7 +72,7 @@ async def evaluate(replica_count, client_count, crypto):
     print()
 
     # capture output before interrupt?
-    print('interrupt seq and replicas', file=stderr)
+    print('interrupt sequencer and replicas', file=stderr)
     await gather(*[
         remote_sync(address, ['tmux', 'send-key', '-t', 'neo', 'C-c'])
         for address in replica_addresses + [seq_address]])
@@ -83,9 +83,9 @@ async def evaluate(replica_count, client_count, crypto):
         out, err = await client.communicate()
         if client.returncode != 0:
             count = None
-            print(err.decode())
+            print(err.decode(), file=stderr)
         if count is None:
-            continue
+            break
         [client_count, latency] = out.decode().splitlines()
         count += int(client_count)
         if output_lantecy:
@@ -98,6 +98,7 @@ async def evaluate(replica_count, client_count, crypto):
     await gather(*[
         remote_sync(address, ['pkill', 'neo'])
         for address in client_addresses + replica_addresses + [seq_address]])
+    return count
 
 if __name__ == '__main__':
     from sys import argv
@@ -105,6 +106,15 @@ if __name__ == '__main__':
     if argv[1:2] == ['test']:
         run(evaluate(1, 1, argv[2]))
     else:
-        for client_count in [1, 2, 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]:
-            print(client_count)
-            run(evaluate(client_count))
+        client_count = 80
+        wait = False
+        for replica_count in [1, 4, 7, 10, 13, 16]:
+            if wait:
+                print('wait to prevent interference between runs', file=stderr)
+                run(sleep(20))
+            else:
+                wait = True
+            print(replica_count, client_count)
+            retry = True
+            while retry:
+                retry = run(evaluate(replica_count, client_count, argv[1])) is None
