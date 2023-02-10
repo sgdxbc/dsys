@@ -19,7 +19,7 @@ struct Cli {
 
 fn main() {
     let cli = Cli::parse();
-    let socket = Arc::new(UdpSocket::bind(("0.0.0.0", 5001)).unwrap());
+    let socket = Arc::new(UdpSocket::bind("0.0.0.0:5001").unwrap());
     neo::init_socket(&socket, None); // only send multicast
 
     // core 0: udp::Rx -> Sequencer -> _chan_

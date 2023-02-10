@@ -64,7 +64,7 @@ pub fn init_socket(socket: &UdpSocket, multicast_ip: Option<Ipv4Addr>) {
 pub enum Rx {
     SipHash { id: u8 },
     P256, // key in `RxP256`
-    Reject,
+    UnicastOnly,
 }
 
 pub enum RxP256Event {
@@ -102,7 +102,7 @@ impl Message {
             .allow_trailing_bytes()
             .deserialize(&buf[68..])
         else {
-            eprintln!("malformed");
+            eprintln!("malformed (deserialize ordered request)");
             return None;
         };
         Some(Message::OrderedRequest(multicast, request))
@@ -114,28 +114,33 @@ impl Protocol<RxEvent<'_>> for Rx {
 
     fn update(&mut self, event: RxEvent<'_>) -> Self::Effect {
         let RxEvent::Receive(buf) = event;
+        // println!("receive {buf:02x?}");
         if buf[..4] == [0; 4] {
-            return Multiplex::B(RxP256Event::Unicast(buf[..4].into()));
+            return Multiplex::B(RxP256Event::Unicast(buf[4..].into()));
         }
         let mut digest = <[u8; 32]>::from(sha2::Sha256::digest(&buf[68..]));
         digest[..4].copy_from_slice(&buf[..4]);
         match self {
-            Rx::Reject => Multiplex::A(None),
+            Rx::UnicastOnly => Multiplex::A(None),
+            Rx::P256 => Multiplex::B(RxP256Event::Multicast(buf.into())),
             Rx::SipHash { id } => {
                 let i = u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]) as u8;
                 if (i..i + 4).contains(id) {
                     let mut hasher = SipHasher::new_with_keys(u64::MAX, *id as _);
                     digest.hash(&mut hasher);
+                    let expect = &hasher.finish().to_le_bytes()[..4];
                     let offset = (8 + (*id - i)) as usize;
-                    if buf[offset..offset + 4] != hasher.finish().to_le_bytes()[..4] {
-                        eprintln!("malformed");
+                    if &buf[offset..offset + 4] != expect {
+                        eprintln!(
+                            "malformed (siphash) expect {expect:02x?} actual {:02x?}",
+                            &buf[offset..offset + 4],
+                        );
                         return Multiplex::A(None);
                     }
                 }
                 // otherwise, there is no MAC for this receiver in the packet
                 Multiplex::A(Message::ordered_request(&buf))
             }
-            Rx::P256 => Multiplex::B(RxP256Event::Multicast(buf.into())),
         }
     }
 }
@@ -165,7 +170,7 @@ impl Protocol<RxP256Event> for RxP256 {
                 Some(
                     bincode::options()
                         .allow_trailing_bytes()
-                        .deserialize(&buf[4..])
+                        .deserialize(&buf)
                         .unwrap(),
                 )
             }
@@ -180,7 +185,7 @@ impl Protocol<RxP256Event> for RxP256 {
                     .map(|signature| self.secp.verify_ecdsa(&message, &signature, public_key))
                     .is_err()
                 {
-                    eprintln!("malformed");
+                    eprintln!("malformed (p256)");
                     None
                 } else {
                     Message::ordered_request(&buf)
@@ -206,6 +211,7 @@ impl Protocol<NodeEffect<Message>> for Tx {
             }
             NodeEffect::Send(NodeAddr::Socket(addr), message) if Some(addr) != self.multicast => {
                 let buf = bincode::options().serialize(&message).unwrap();
+                // println!("unicast {addr} {buf:02x?}");
                 TxEvent::Send(addr, [&[0; 4][..], &buf].concat().into())
             }
             NodeEffect::Send(NodeAddr::Socket(_), message) => {
@@ -216,7 +222,7 @@ impl Protocol<NodeEffect<Message>> for Tx {
                     [&digest[..], &[0; 36][..], &buf].concat().into(),
                 )
             }
-            _ => panic!(),
+            NodeEffect::Send(..) => panic!(),
         }
     }
 }

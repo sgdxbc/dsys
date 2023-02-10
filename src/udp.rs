@@ -1,7 +1,7 @@
 use std::{
     borrow::Cow,
     marker::PhantomData,
-    net::{SocketAddr, UdpSocket},
+    net::{SocketAddr, ToSocketAddrs, UdpSocket},
     os::fd::AsRawFd,
     panic::panic_any,
     sync::Arc,
@@ -17,6 +17,15 @@ use nix::{
 use serde::{de::DeserializeOwned, Serialize};
 
 use crate::{protocol::Generate, NodeAddr, NodeEffect, Protocol};
+
+// really seek for a better way
+pub fn client_socket(remote: impl ToSocketAddrs) -> UdpSocket {
+    let socket = UdpSocket::bind("0.0.0.0:0").unwrap();
+    socket.connect(remote).unwrap();
+    let addr = socket.local_addr().unwrap();
+    drop(socket);
+    UdpSocket::bind(addr).unwrap()
+}
 
 pub fn init_socket(socket: &UdpSocket) {
     socket.set_nonblocking(true).unwrap();

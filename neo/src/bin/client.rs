@@ -1,6 +1,7 @@
 use std::{
     iter::repeat_with,
-    net::{IpAddr, ToSocketAddrs, UdpSocket},
+    net::{IpAddr, ToSocketAddrs},
+    process::exit,
     sync::{
         atomic::{AtomicBool, AtomicU8, Ordering},
         Arc,
@@ -29,8 +30,7 @@ struct Cli {
 
 fn main() {
     let cli = Cli::parse();
-    let socket = Arc::new(UdpSocket::bind(("0.0.0.0", 0)).unwrap());
-    socket.connect((cli.seq_ip, 5001)).unwrap();
+    let socket = Arc::new(udp::client_socket((cli.seq_ip, 5001)));
     neo::init_socket(&socket, None);
     let mode = Arc::new(AtomicU8::new(WorkloadMode::Discard as _));
     let mut node = Workload::new_benchmark(
@@ -56,9 +56,9 @@ fn main() {
     let mut rx = udp::Rx(socket.clone());
     let _rx = spawn(move || {
         rx.deploy(
-            &mut neo::Rx::Reject
+            &mut neo::Rx::UnicastOnly
                 .then((
-                    Map(|_| unreachable!()),
+                    Map(|_| unreachable!()), // receive multicast
                     RxP256::new(None).then(message_channel.0),
                 ))
                 .then(Map(Into::into)),
@@ -95,7 +95,9 @@ fn main() {
     running.store(false, Ordering::SeqCst);
     let mut latencies = node.join().unwrap().latencies;
     println!("{}", latencies.len());
-    if !latencies.is_empty() {
+    if latencies.is_empty() {
+        exit(1)
+    } else {
         latencies.sort_unstable();
         println!(
             "50th {:?} 99th {:?}",

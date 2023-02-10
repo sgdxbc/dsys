@@ -16,7 +16,7 @@ use dsys::{
 };
 
 fn main() {
-    let socket = Arc::new(UdpSocket::bind(("0.0.0.0", 5000)).unwrap());
+    let socket = Arc::new(UdpSocket::bind("0.0.0.0:5000").unwrap());
     udp::init_socket(&socket);
     let node = Replica::new(App::Null(app::Null));
 

@@ -1,7 +1,7 @@
 use std::{
     env::args,
     iter::repeat_with,
-    net::{ToSocketAddrs, UdpSocket},
+    net::ToSocketAddrs,
     process::exit,
     sync::{
         atomic::{AtomicBool, AtomicU8, Ordering},
@@ -23,8 +23,7 @@ use rand::random;
 
 fn main() {
     let replica_ip = args().nth(1).unwrap_or(String::from("localhost"));
-    let socket = Arc::new(UdpSocket::bind(("0.0.0.0", 0)).unwrap());
-    socket.connect((&*replica_ip, 5000)).unwrap(); // query a local addr
+    let socket = Arc::new(udp::client_socket((&*replica_ip, 5000)));
     udp::init_socket(&socket);
     let mode = Arc::new(AtomicU8::new(WorkloadMode::Discard as _));
     let mut node = Workload::new_benchmark(

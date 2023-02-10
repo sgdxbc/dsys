@@ -5,10 +5,10 @@ pub mod simulate;
 pub mod udp;
 pub mod unreplicated;
 
-pub use app::App;
-pub use node::{NodeAddr, NodeEffect, NodeEvent};
-pub use protocol::Protocol;
-pub use simulate::Simulate;
+pub use crate::app::App;
+pub use crate::node::{NodeAddr, NodeEffect, NodeEvent};
+pub use crate::protocol::Protocol;
+pub use crate::simulate::Simulate;
 
 pub fn set_affinity(affinity: usize) {
     use nix::{

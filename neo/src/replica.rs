@@ -128,7 +128,7 @@ impl Replica {
             });
         }
         if request != self[multicast.seq].request {
-            //
+            eprintln!("multicast request mismatch");
             return Effect::NOP;
         }
         match self.multicast_crypto {
@@ -156,9 +156,11 @@ impl Replica {
             }
         }
         if !self.multicast_complete(multicast.seq) {
+            // println!("multicast not complete");
             return Effect::NOP;
         }
 
+        // dbg!(&request);
         match self.replies.get(&request.client_id) {
             Some(reply) if reply.request_num > request.request_num => return Effect::NOP,
             Some(reply) if reply.request_num == request.request_num => {
@@ -177,6 +179,7 @@ impl Replica {
             result,
             seq: multicast.seq,
         };
+        // dbg!(&reply);
         self.replies.insert(request.client_id, reply.clone());
         Effect::pure(NodeEffect::Send(request.client_addr, Message::Reply(reply)))
     }

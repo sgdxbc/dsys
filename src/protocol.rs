@@ -169,6 +169,19 @@ pub trait ReactiveGenerate<E> {
         P: Protocol<Self::Event, Effect = ()>;
 }
 
+impl<E> ReactiveGenerate<()> for channel::Receiver<E> {
+    type Event = E;
+
+    fn update<P>(&mut self, _: (), protocol: &mut P)
+    where
+        P: Protocol<Self::Event, Effect = ()>,
+    {
+        for event in self.try_iter() {
+            protocol.update(event)
+        }
+    }
+}
+
 pub enum OneOf<A, B> {
     A(A),
     B(B),
@@ -244,6 +257,7 @@ where
     }
 }
 
+// another way is impl `Composite<Atom = ()>` for Multiplex<(), ()>
 impl From<Multiplex<(), ()>> for () {
     fn from(_: Multiplex<(), ()>) -> Self {}
 }
@@ -269,7 +283,7 @@ impl<A, B> Generate for (channel::Receiver<A>, channel::Receiver<B>) {
                     disconnected.1 = true;
                 },
             }
-            disconnected == (true, true)
+            disconnected != (true, true)
         } {}
     }
 }

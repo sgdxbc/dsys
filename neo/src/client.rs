@@ -58,6 +58,7 @@ impl Protocol<ClientEvent<Message>> for Client {
                 Some(self.do_request())
             }
             ClientEvent::Node(NodeEvent::Handle(Message::Reply(reply))) => {
+                // dbg!(&reply);
                 if self.op.is_none() || reply.request_num != self.request_num {
                     return None;
                 }

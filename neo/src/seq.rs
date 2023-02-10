@@ -42,15 +42,19 @@ impl Generate for SipHash {
         P: for<'a> Protocol<Self::Event<'a>, Effect = ()>,
     {
         for mut buf in self.channel.iter() {
+            let mut signatures = [0; 16];
             let mut i = 0;
             while i < self.replica_count {
-                buf[4..8].copy_from_slice(&i.to_ne_bytes());
                 for j in i..u32::min(i + 4, self.replica_count) {
                     let mut hasher = SipHasher::new_with_keys(u64::MAX, j as _);
                     buf[..32].hash(&mut hasher);
-                    let offset = (8 + (j - i) * 4) as usize;
-                    buf[offset..offset + 4].copy_from_slice(&hasher.finish().to_le_bytes()[..4]);
+                    let offset = (j - i) as usize * 4;
+                    signatures[offset..offset + 4]
+                        .copy_from_slice(&hasher.finish().to_le_bytes()[..4]);
+                    // println!("signature[{j}] {:02x?}", &signatures[offset..offset + 4]);
                 }
+                buf[4..8].copy_from_slice(&i.to_be_bytes());
+                buf[8..24].copy_from_slice(&signatures);
                 protocol.update(TxEvent::Send(self.multicast_addr, buf.clone()));
                 i += 4;
             }
