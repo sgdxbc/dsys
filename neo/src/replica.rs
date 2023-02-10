@@ -5,7 +5,7 @@ use std::{
 
 use dsys::{protocol::Composite, App, NodeEffect, Protocol};
 
-use crate::{Message, Multicast, Reply, Request};
+use crate::{Message, Multicast, MulticastCrypto, Reply, Request};
 
 pub struct Replica {
     id: u8,
@@ -16,11 +16,6 @@ pub struct Replica {
     reorder_request: HashMap<u32, Vec<(Multicast, Request)>>,
     app: App,
     replies: HashMap<u32, Reply>,
-}
-
-pub enum MulticastCrypto {
-    SipHash,
-    P256,
 }
 
 enum MulticastSignature {
@@ -136,7 +131,7 @@ impl Replica {
                 self.multicast_signatures
                     .insert(multicast.seq, MulticastSignature::P256(multicast.signature));
             }
-            MulticastCrypto::SipHash => {
+            MulticastCrypto::SipHash { .. } => {
                 let MulticastSignature::SipHash(signatures) = self.multicast_signatures
                     .entry(multicast.seq)
                     .or_insert(MulticastSignature::SipHash(Default::default()))

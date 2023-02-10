@@ -61,10 +61,15 @@ pub fn init_socket(socket: &UdpSocket, multicast_ip: Option<Ipv4Addr>) {
     }
 }
 
-pub enum Rx {
+#[derive(Debug, Clone, Copy)]
+pub enum MulticastCrypto {
     SipHash { id: u8 },
-    P256, // key in `RxP256`
+    P256,
+}
+
+pub enum Rx {
     UnicastOnly,
+    Multicast(MulticastCrypto),
 }
 
 pub enum RxP256Event {
@@ -122,8 +127,10 @@ impl Protocol<RxEvent<'_>> for Rx {
         digest[..4].copy_from_slice(&buf[..4]);
         match self {
             Rx::UnicastOnly => Multiplex::A(None),
-            Rx::P256 => Multiplex::B(RxP256Event::Multicast(buf.into())),
-            Rx::SipHash { id } => {
+            Rx::Multicast(MulticastCrypto::P256) => {
+                Multiplex::B(RxP256Event::Multicast(buf.into()))
+            }
+            Rx::Multicast(MulticastCrypto::SipHash { id }) => {
                 let i = u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]) as u8;
                 if (i..i + 4).contains(id) {
                     let mut hasher = SipHasher::new_with_keys(u64::MAX, *id as _);
@@ -176,7 +183,7 @@ impl Protocol<RxP256Event> for RxP256 {
             }
             RxP256Event::Multicast(buf) => {
                 let Some(public_key) = &self.multicast else {
-                    return None
+                    panic!()
                 };
                 let mut digest = <[u8; 32]>::from(sha2::Sha256::digest(&buf[68..]));
                 digest[..4].copy_from_slice(&buf[..4]);

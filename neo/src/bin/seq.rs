@@ -7,7 +7,8 @@ use std::{
 use clap::Parser;
 use crossbeam::channel;
 use dsys::{protocol::Generate, set_affinity, udp, Protocol};
-use neo::Sequencer;
+use neo::{seq, Sequencer};
+use secp256k1::SecretKey;
 
 #[derive(Debug, Parser)]
 struct Cli {
@@ -15,6 +16,8 @@ struct Cli {
     multicast: Ipv4Addr,
     #[clap(long)]
     replica_count: u32,
+    #[clap(long)]
+    crypto: String,
 }
 
 fn main() {
@@ -31,15 +34,32 @@ fn main() {
     });
     // core 1..: _chan_ ~> SipHash -> udp::Tx
     for i in 1..available_parallelism().unwrap().get() - 1 {
-        let mut tx = neo::seq::SipHash {
-            channel: channel.1.clone(),
-            multicast_addr: (cli.multicast, 5000).into(),
-            replica_count: cli.replica_count,
-        };
+        let multicast_addr = (cli.multicast, 5000).into();
+        let mut channel = channel.1.clone();
         let socket = socket.clone();
+        let tx = match &*cli.crypto {
+            "siphash" => Box::new(move || {
+                seq::SipHash {
+                    channel,
+                    multicast_addr,
+                    replica_count: cli.replica_count,
+                }
+                .deploy(&mut udp::Tx::new(socket))
+            }) as Box<dyn FnOnce() + Send>,
+            "p256" => Box::new(move || {
+                channel.deploy(
+                    &mut seq::P256::new(
+                        multicast_addr,
+                        SecretKey::from_slice(&[b"seq", &[0; 29][..]].concat()).unwrap(),
+                    )
+                    .then(udp::Tx::new(socket)),
+                )
+            }),
+            _ => panic!(),
+        };
         let _tx = spawn(move || {
             set_affinity(i);
-            tx.deploy(&mut udp::Tx::new(socket))
+            tx()
         });
     }
 

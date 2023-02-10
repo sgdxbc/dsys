@@ -13,7 +13,8 @@ use dsys::{
     protocol::{Generate, Map},
     set_affinity, udp, App, Protocol,
 };
-use neo::{replica::MulticastCrypto, Replica, RxP256};
+use neo::{MulticastCrypto, Replica, RxP256};
+use secp256k1::{Secp256k1, SecretKey};
 
 #[derive(Debug, Parser)]
 struct Cli {
@@ -32,16 +33,11 @@ fn main() {
     let socket = Arc::new(UdpSocket::bind("0.0.0.0:5000").unwrap());
     neo::init_socket(&socket, Some(cli.multicast));
     let multicast_crypto = match &*cli.crypto {
-        "siphash" => MulticastCrypto::SipHash,
+        "siphash" => MulticastCrypto::SipHash { id: cli.id },
         "p256" => MulticastCrypto::P256,
         _ => panic!(),
     };
     let node = Replica::new(cli.id, App::Null(app::Null), cli.f, multicast_crypto);
-    let rx = match &*cli.crypto {
-        "siphash" => neo::Rx::SipHash { id: cli.id },
-        "p256" => neo::Rx::P256,
-        _ => panic!(),
-    };
 
     // core 0: udp::Rx -> `rx` -> (_msg_, _p256_)
     let message_channel = channel::unbounded();
@@ -52,7 +48,7 @@ fn main() {
         move || {
             set_affinity(0);
             udp::Rx(socket).deploy(
-                &mut rx
+                &mut neo::Rx::Multicast(multicast_crypto)
                     .then((message_channel, p256_channel.0))
                     .then(Map(Into::into)),
             )
@@ -76,8 +72,12 @@ fn main() {
             (effect_channel, p256_channel).deploy(
                 &mut (
                     Map(identity).each_then(neo::Tx { multicast: None }.then(udp::Tx::new(socket))),
-                    // TODO
-                    RxP256::new(None).then(message_channel),
+                    RxP256::new(Some(
+                        SecretKey::from_slice(&[b"seq", &[0; 29][..]].concat())
+                            .unwrap()
+                            .public_key(&Secp256k1::new()),
+                    ))
+                    .then(message_channel),
                 )
                     .then(Map(Into::into)),
             )
