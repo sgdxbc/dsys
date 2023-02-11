@@ -34,6 +34,7 @@ pub struct Request {
 pub struct Multicast {
     seq: u32,
     crypto: MulticastCrypto,
+    digest: [u8; 32], // precomputed for replica
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,6 +70,12 @@ pub enum Message {
 }
 
 impl Multicast {
+    fn digest(buf: &[u8]) -> [u8; 32] {
+        let mut digest = <[u8; 32]>::from(sha2::Sha256::digest(&buf[68..]));
+        digest[..4].copy_from_slice(&buf[..4]);
+        digest
+    }
+
     fn deserialize_sip_hash(buf: &[u8]) -> Multicast {
         let seq = u32::from_be_bytes(buf[..4].try_into().unwrap());
         let index = buf[4];
@@ -80,6 +87,7 @@ impl Multicast {
         Multicast {
             seq,
             crypto: MulticastCrypto::SipHash { index, signatures },
+            digest: Self::digest(buf),
         }
     }
 
@@ -98,7 +106,11 @@ impl Multicast {
                 signature: Some((part_a, part_b)),
             }
         };
-        Multicast { seq, crypto }
+        Multicast {
+            seq,
+            crypto,
+            digest: Self::digest(buf),
+        }
     }
 }
 
@@ -171,10 +183,8 @@ impl Protocol<RxEvent<'_>> for Rx {
                     unreachable!()
                 };
                 if (*index..*index + 4).contains(id) {
-                    let mut digest = <[u8; 32]>::from(sha2::Sha256::digest(&buf[68..]));
-                    digest[..4].copy_from_slice(&buf[..4]);
                     let mut hasher = SipHasher::new_with_keys(u64::MAX, *id as _);
-                    digest.hash(&mut hasher);
+                    multicast.digest.hash(&mut hasher);
                     let expect = &hasher.finish().to_le_bytes()[..4];
                     if signatures[(*id - *index) as usize] != expect {
                         eprintln!(
@@ -232,10 +242,7 @@ impl Protocol<RxP256Event> for RxP256 {
                     unreachable!()
                 };
 
-                let mut digest = <[u8; 32]>::from(sha2::Sha256::digest(&buf));
-                digest[..4].copy_from_slice(&multicast.seq.to_be_bytes());
-                let message = secp256k1::Message::from_slice(&digest).unwrap();
-
+                let message = secp256k1::Message::from_slice(&multicast.digest).unwrap();
                 let mut bytes = [0; 64];
                 bytes[..32].copy_from_slice(&signature.0);
                 bytes[32..].copy_from_slice(&signature.1);

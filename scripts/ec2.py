@@ -62,7 +62,7 @@ def launch(args, dry):
                 instance = ec2.create_instances(
                     **params[role](i), 
                     MinCount=1, MaxCount=1, 
-                    TagSpecifications=[{'ResourceType': 'instance', 'Tags': [{'Key': 'role', 'Value': role}]}],
+                    TagSpecifications=[{'ResourceType': 'instance', 'Tags': [{'Key': 'dsys-role', 'Value': role}]}],
                     DryRun=dry,
                 )[0]
                 instances.append(instance)
@@ -89,7 +89,7 @@ if sys.argv[1:2] == ['launch']:
 elif sys.argv[1:2] == ['terminate']:
     instances = ec2.instances.filter(Filters=[
         {'Name': 'instance-state-name', 'Values': ['running']},  # other states?
-        {'Name': 'tag:role', 'Values': ['*']}])
+        {'Name': 'tag:dsys-role', 'Values': ['*']}])
     instances.terminate()
     # for instance in instances:
     #     instance.wait_until_terminated()

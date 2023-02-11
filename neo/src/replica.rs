@@ -1,9 +1,7 @@
-use std::{
-    collections::HashMap,
-    ops::{Index, IndexMut},
-};
+use std::{collections::HashMap, ops::Index};
 
 use dsys::{protocol::Composite, App, NodeEffect, Protocol};
+use sha2::Digest;
 
 use crate::{Message, Multicast, MulticastCrypto, Reply, Request};
 
@@ -11,6 +9,7 @@ pub struct Replica {
     id: u8,
     f: usize,
     pub log: Vec<LogEntry>,
+    spec_num: u32,
     multicast_signatures: HashMap<u32, MulticastSignature>,
     reorder_request: HashMap<u32, Vec<(Multicast, Request)>>,
     app: App,
@@ -25,7 +24,8 @@ enum MulticastSignature {
 #[allow(unused)]
 pub struct LogEntry {
     request: Request,
-    //
+    // the link hash that should appear in next multicast, if it links
+    next_link: [u8; 32],
 }
 
 impl Replica {
@@ -34,6 +34,7 @@ impl Replica {
             id,
             f,
             log: Default::default(),
+            spec_num: 0,
             multicast_signatures: Default::default(),
             reorder_request: Default::default(),
             app,
@@ -42,17 +43,13 @@ impl Replica {
     }
 }
 
-impl Index<u32> for Replica {
+struct I<'a>(&'a [LogEntry]);
+
+impl Index<u32> for I<'_> {
     type Output = LogEntry;
 
     fn index(&self, index: u32) -> &Self::Output {
-        &self.log[(index - 1) as usize]
-    }
-}
-
-impl IndexMut<u32> for Replica {
-    fn index_mut(&mut self, index: u32) -> &mut Self::Output {
-        &mut self.log[(index - 1) as usize]
+        &self.0[(index - 1) as usize]
     }
 }
 
@@ -67,7 +64,7 @@ impl Protocol<Event> for Replica {
             return Effect::NOP;
         };
         match message {
-            Message::OrderedRequest(multicast, request) => self.reorder_request(multicast, request),
+            Message::OrderedRequest(multicast, request) => self.insert_request(multicast, request),
             _ => Effect::NOP,
         }
     }
@@ -95,7 +92,7 @@ impl Replica {
         }
     }
 
-    fn reorder_request(&mut self, multicast: Multicast, request: Request) -> Effect {
+    fn insert_request(&mut self, multicast: Multicast, request: Request) -> Effect {
         if multicast.seq != self.ordered_entry() {
             self.reorder_request
                 .entry(multicast.seq)
@@ -115,19 +112,25 @@ impl Replica {
 
     fn handle_request(&mut self, multicast: Multicast, request: Request) -> Effect {
         assert_eq!(multicast.seq, self.ordered_entry());
-        if multicast.seq == self.next_entry() {
-            self.log.push(LogEntry {
-                request: request.clone(),
-            });
-        }
-        if request != self[multicast.seq].request {
-            eprintln!("multicast request mismatch");
-            return Effect::NOP;
-        }
+
         use MulticastSignature::*;
         match multicast.crypto {
             MulticastCrypto::SipHash { index, signatures } => {
                 // println!("{index} {signatures:02x?}");
+                if self.next_entry() > multicast.seq
+                    && request != I(&self.log)[multicast.seq].request
+                {
+                    eprintln!("multicast request mismatch");
+                    return Effect::NOP;
+                }
+
+                if self.next_entry() == multicast.seq {
+                    self.log.push(LogEntry {
+                        request,
+                        next_link: Default::default(),
+                    });
+                }
+
                 let SipHash(multicast_signatures) = self.multicast_signatures
                     .entry(multicast.seq)
                     .or_insert(SipHash(Default::default()))
@@ -144,11 +147,32 @@ impl Replica {
             } => {
                 self.multicast_signatures
                     .insert(multicast.seq, P256(signature.0, signature.1));
+                let next_link = I(&self.log)[multicast.seq].next_link;
+                self.log.push(LogEntry {
+                    request,
+                    next_link: sha2::Sha256::digest(
+                        &[&multicast.digest[..], &next_link[..]].concat(),
+                    )
+                    .into(),
+                });
             }
             MulticastCrypto::P256 {
                 link_hash: Some(link_hash),
                 signature: None,
-            } => todo!(),
+            } => {
+                let next_link = I(&self.log)[multicast.seq].next_link;
+                if link_hash != next_link {
+                    eprintln!("malformed (link hash)");
+                    return Effect::NOP;
+                }
+                self.log.push(LogEntry {
+                    request,
+                    next_link: sha2::Sha256::digest(
+                        &[&multicast.digest[..], &next_link[..]].concat(),
+                    )
+                    .into(),
+                });
+            }
             MulticastCrypto::P256 { .. } => unreachable!(),
         }
         if !self.multicast_complete(multicast.seq) {
@@ -158,25 +182,37 @@ impl Replica {
 
         // dbg!(&request);
         // println!("complete");
-        match self.replies.get(&request.client_id) {
-            Some(reply) if reply.request_num > request.request_num => return Effect::NOP,
-            Some(reply) if reply.request_num == request.request_num => {
-                let mut reply = reply.clone();
-                reply.seq = multicast.seq;
-                return Effect::pure(NodeEffect::Send(request.client_addr, Message::Reply(reply)));
+        let mut effect = Effect::NOP;
+        for op_num in self.spec_num + 1..=multicast.seq {
+            let request = &I(&self.log)[op_num].request;
+            match self.replies.get_mut(&request.client_id) {
+                Some(reply) if reply.request_num > request.request_num => return Effect::NOP,
+                Some(reply) if reply.request_num == request.request_num => {
+                    reply.seq = multicast.seq;
+                    effect = effect.compose(Effect::pure(NodeEffect::Send(
+                        request.client_addr,
+                        Message::Reply(reply.clone()),
+                    )));
+                    continue;
+                }
+                _ => {}
             }
-            _ => {}
-        }
 
-        let result = self.app.execute(&request.op);
-        let reply = Reply {
-            request_num: request.request_num,
-            replica_id: self.id,
-            result,
-            seq: multicast.seq,
-        };
-        // dbg!(&reply);
-        self.replies.insert(request.client_id, reply.clone());
-        Effect::pure(NodeEffect::Send(request.client_addr, Message::Reply(reply)))
+            let result = self.app.execute(&request.op);
+            let reply = Reply {
+                request_num: request.request_num,
+                replica_id: self.id,
+                result,
+                seq: multicast.seq,
+            };
+            // dbg!(&reply);
+            self.replies.insert(request.client_id, reply.clone());
+            effect = effect.compose(Effect::pure(NodeEffect::Send(
+                request.client_addr,
+                Message::Reply(reply),
+            )))
+        }
+        self.spec_num = multicast.seq;
+        effect
     }
 }

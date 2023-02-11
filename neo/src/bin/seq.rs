@@ -2,11 +2,15 @@ use std::{
     net::{Ipv4Addr, UdpSocket},
     sync::Arc,
     thread::{available_parallelism, spawn},
+    time::{Duration, Instant},
 };
 
 use clap::Parser;
 use crossbeam::channel;
-use dsys::{protocol::Generate, set_affinity, udp, Protocol};
+use dsys::{
+    protocol::{Generate, Map},
+    set_affinity, udp, Protocol,
+};
 use neo::{seq, Sequencer};
 use secp256k1::SecretKey;
 
@@ -22,46 +26,72 @@ struct Cli {
 
 fn main() {
     let cli = Cli::parse();
+    // sequencer's 5000 port is actually available as well
+    // try to distinguish the packets that "not supposed to be received directly"
     let socket = Arc::new(UdpSocket::bind("0.0.0.0:5001").unwrap());
     neo::init_socket(&socket, None); // only send multicast
 
-    // core 0: udp::Rx -> Sequencer -> _chan_
     let mut rx = udp::Rx(socket.clone());
-    let channel = channel::unbounded();
-    let seq = spawn(move || {
-        set_affinity(0);
-        rx.deploy(&mut Sequencer::default().then(channel.0))
-    });
-    // core 1..: _chan_ ~> SipHash -> udp::Tx
-    for i in 1..available_parallelism().unwrap().get() - 1 {
-        let multicast_addr = (cli.multicast, 5000).into();
-        let mut channel = channel.1.clone();
-        let socket = socket.clone();
-        let tx = match &*cli.crypto {
-            "siphash" => Box::new(move || {
-                seq::SipHash {
-                    channel,
+    let multicast_addr = (cli.multicast, 5000).into();
+    match &*cli.crypto {
+        "siphash" => {
+            let channel = channel::unbounded();
+            let mut seq = Sequencer::default()
+                .then(Map(|(buf, should_link): (_, bool)| {
+                    assert!(!should_link);
+                    buf
+                }))
+                .then(channel.0);
+            let seq = spawn(move || {
+                set_affinity(0);
+                rx.deploy(&mut seq);
+            });
+            for i in 1..available_parallelism().unwrap().get() - 1 {
+                let mut tx = seq::SipHash {
+                    channel: channel.1.clone(),
                     multicast_addr,
                     replica_count: cli.replica_count,
+                };
+                let socket = socket.clone();
+                let _tx = spawn(move || {
+                    set_affinity(i);
+                    tx.deploy(&mut udp::Tx::new(socket));
+                });
+            }
+            seq.join().unwrap()
+        }
+        "p256" => {
+            let channel = channel::unbounded();
+            let mut seq = Sequencer::default();
+            let mut last_sign = Instant::now();
+            seq.should_link = Box::new(move || {
+                if Instant::now() - last_sign >= Duration::from_secs_f64(1. / (81.78 * 1000.)) {
+                    last_sign = Instant::now();
+                    false
+                } else {
+                    true
                 }
-                .deploy(&mut udp::Tx::new(socket))
-            }) as Box<dyn FnOnce() + Send>,
-            "p256" => Box::new(move || {
-                channel.deploy(
-                    &mut seq::P256::new(
-                        multicast_addr,
-                        SecretKey::from_slice(&[b"seq", &[0; 29][..]].concat()).unwrap(),
+            });
+            let seq = spawn(move || {
+                set_affinity(0);
+                rx.deploy(&mut seq.then(channel.0))
+            });
+            for i in 1..available_parallelism().unwrap().get() - 1 {
+                let mut channel = channel.1.clone();
+                let socket = socket.clone();
+                let _tx = spawn(move || {
+                    set_affinity(i);
+                    channel.deploy(
+                        &mut seq::P256::new(
+                            multicast_addr,
+                            SecretKey::from_slice(&[b"seq", &[0; 29][..]].concat()).unwrap(),
+                        )
+                        .then(udp::Tx::new(socket)),
                     )
-                    .then(udp::Tx::new(socket)),
-                )
-            }),
-            _ => panic!(),
-        };
-        let _tx = spawn(move || {
-            set_affinity(i);
-            tx()
-        });
+                });
+            }
+            seq.join().unwrap()
+        }
+        _ => panic!(),
     }
-
-    seq.join().unwrap()
 }
