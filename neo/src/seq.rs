@@ -12,8 +12,6 @@ use dsys::{
 use secp256k1::{Secp256k1, SecretKey, SignOnly};
 use siphasher::sip::SipHasher;
 
-use crate::{Multicast, MulticastCrypto};
-
 #[derive(Default)]
 pub struct Sequencer(u32);
 
@@ -40,23 +38,25 @@ impl Generate for SipHash {
         P: for<'a> Protocol<Self::Event<'a>, Effect = ()>,
     {
         for (seq, event) in self.channel.iter() {
-            let RxEvent::Receive(buf) = event.into();
-            let mut signatures = [[0; 4]; 4];
+            let RxEvent::Receive(mut buf) = event.into();
+            buf.to_mut()[..4].copy_from_slice(&seq.to_be_bytes());
+
+            let mut signatures = [0; 16];
             let mut index = 0;
             while index < self.replica_count {
                 let mut buf = Box::<[_]>::from(buf.clone());
                 for j in index..u8::min(index + 4, self.replica_count) {
                     let mut hasher = SipHasher::new_with_keys(u64::MAX, j as _);
                     buf[..32].hash(&mut hasher);
-                    signatures[(j - index) as usize]
+
+                    let offset = (j - index) as usize * 4;
+                    signatures[offset..offset + 4]
                         .copy_from_slice(&hasher.finish().to_le_bytes()[..4]);
                     // println!("signature[{j}] {:02x?}", &signatures[offset..offset + 4]);
                 }
-                Multicast {
-                    seq,
-                    crypto: MulticastCrypto::SipHash { index, signatures },
-                }
-                .serialize(&mut buf);
+                buf[4] = index;
+                buf[5..21].copy_from_slice(&signatures);
+
                 protocol.update(TxEvent::Send(self.multicast_addr, buf));
                 index += 4;
             }
@@ -85,22 +85,15 @@ impl Protocol<(u32, RxEventOwned)> for P256 {
 
     fn update(&mut self, (seq, event): (u32, RxEventOwned)) -> Self::Effect {
         let RxEvent::Receive(mut buf) = event.into();
+        buf.to_mut()[..4].copy_from_slice(&seq.to_be_bytes());
+
         let message = secp256k1::Message::from_slice(&buf[..32]).unwrap();
         let signature = self
             .secp
             .sign_ecdsa(&message, &self.secret_key)
             .serialize_compact();
-        Multicast {
-            seq,
-            crypto: MulticastCrypto::P256 {
-                link_hash: None,
-                signature: Some((
-                    signature[..32].try_into().unwrap(),
-                    signature[32..].try_into().unwrap(),
-                )),
-            },
-        }
-        .serialize(buf.to_mut());
+
+        buf.to_mut()[4..68].copy_from_slice(&signature);
         TxEvent::Send(self.multicast_addr, buf.into())
     }
 }

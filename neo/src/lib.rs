@@ -69,35 +69,9 @@ pub enum Message {
 }
 
 impl Multicast {
-    pub fn serialize(&self, buf: &mut [u8]) {
-        assert_ne!(self.seq, 0);
-        buf[..4].copy_from_slice(&self.seq.to_be_bytes());
-        match &self.crypto {
-            MulticastCrypto::SipHash { index, signatures } => {
-                buf[5] = *index;
-                for (i, signature) in signatures.iter().enumerate() {
-                    let offset = 5 + i * 4;
-                    buf[offset..offset + 4].copy_from_slice(signature);
-                }
-            }
-            MulticastCrypto::P256 {
-                link_hash: Some(link_hash),
-                signature: None,
-            } => buf[4..36].copy_from_slice(link_hash),
-            MulticastCrypto::P256 {
-                link_hash: None,
-                signature: Some((part_a, part_b)),
-            } => {
-                buf[4..36].copy_from_slice(part_a);
-                buf[36..68].copy_from_slice(part_b);
-            }
-            _ => unimplemented!(),
-        }
-    }
-
-    pub fn deserialize_sip_hash(buf: &[u8]) -> Multicast {
+    fn deserialize_sip_hash(buf: &[u8]) -> Multicast {
         let seq = u32::from_be_bytes(buf[..4].try_into().unwrap());
-        let index = buf[5];
+        let index = buf[4];
         let mut signatures = [[0; 4]; 4];
         for (i, signature) in signatures.iter_mut().enumerate() {
             let offset = 5 + i * 4;
@@ -109,7 +83,7 @@ impl Multicast {
         }
     }
 
-    pub fn deserialize_p256(buf: &[u8]) -> Multicast {
+    fn deserialize_p256(buf: &[u8]) -> Multicast {
         let seq = u32::from_be_bytes(buf[..4].try_into().unwrap());
         let part_a = <[u8; 32]>::try_from(&buf[4..36]).unwrap();
         let part_b = <[u8; 32]>::try_from(&buf[36..68]).unwrap();

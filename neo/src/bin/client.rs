@@ -17,7 +17,7 @@ use dsys::{
     protocol::{Generate, Map},
     udp, NodeAddr, Protocol,
 };
-use neo::{Client, RxP256};
+use neo::{Client, RxP256Event};
 use rand::random;
 
 #[derive(Debug, Parser)]
@@ -59,7 +59,14 @@ fn main() {
             &mut neo::Rx::UnicastOnly
                 .then((
                     Map(|_| unreachable!()), // receive multicast
-                    RxP256::new(None).then(message_channel.0),
+                    Map(|event| {
+                        if let RxP256Event::Unicast(message) = event {
+                            message
+                        } else {
+                            unreachable!()
+                        }
+                    })
+                    .then(message_channel.0),
                 ))
                 .then(Map(Into::into)),
         )

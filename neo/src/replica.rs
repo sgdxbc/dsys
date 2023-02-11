@@ -127,12 +127,13 @@ impl Replica {
         use MulticastSignature::*;
         match multicast.crypto {
             MulticastCrypto::SipHash { index, signatures } => {
+                // println!("{index} {signatures:02x?}");
                 let SipHash(multicast_signatures) = self.multicast_signatures
-                .entry(multicast.seq)
+                    .entry(multicast.seq)
                     .or_insert(SipHash(Default::default()))
-                    else {
-                        unreachable!()
-                    };
+                else {
+                    unreachable!()
+                };
                 for j in index..u8::min(index + 4, (3 * self.f + 1) as _) {
                     multicast_signatures.insert(j, signatures[(j - index) as usize]);
                 }

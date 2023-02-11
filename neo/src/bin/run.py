@@ -104,7 +104,7 @@ if __name__ == '__main__':
     from sys import argv
     from asyncio import run
     if argv[1:2] == ['test']:
-        run(evaluate(1, 1, argv[2]))
+        run(evaluate(16, 10, argv[2]))
     else:
         client_count = 80
         wait = False
