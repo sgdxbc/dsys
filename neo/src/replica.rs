@@ -10,7 +10,6 @@ use crate::{Message, Multicast, MulticastCrypto, Reply, Request};
 pub struct Replica {
     id: u8,
     f: usize,
-    multicast_crypto: MulticastCrypto,
     pub log: Vec<LogEntry>,
     multicast_signatures: HashMap<u32, MulticastSignature>,
     reorder_request: HashMap<u32, Vec<(Multicast, Request)>>,
@@ -20,7 +19,7 @@ pub struct Replica {
 
 enum MulticastSignature {
     SipHash(HashMap<u8, [u8; 4]>),
-    P256([[u8; 32]; 2]),
+    P256([u8; 32], [u8; 32]),
 }
 
 #[allow(unused)]
@@ -30,11 +29,10 @@ pub struct LogEntry {
 }
 
 impl Replica {
-    pub fn new(id: u8, app: App, f: usize, multicast_crypto: MulticastCrypto) -> Self {
+    pub fn new(id: u8, app: App, f: usize) -> Self {
         Self {
             id,
             f,
-            multicast_crypto,
             log: Default::default(),
             multicast_signatures: Default::default(),
             reorder_request: Default::default(),
@@ -83,8 +81,8 @@ impl Replica {
     fn multicast_complete(&self, seq: u32) -> bool {
         match self.multicast_signatures.get(&seq) {
             None => false,
-            Some(MulticastSignature::P256(_)) => true,
             Some(MulticastSignature::SipHash(signatures)) => signatures.len() == 3 * self.f + 1,
+            Some(MulticastSignature::P256(_, _)) => true,
         }
     }
 
@@ -127,29 +125,30 @@ impl Replica {
             return Effect::NOP;
         }
         use MulticastSignature::*;
-        match self.multicast_crypto {
-            MulticastCrypto::P256 => {
-                self.multicast_signatures
-                    .insert(multicast.seq, P256(multicast.signature));
-            }
-            MulticastCrypto::SipHash { .. } => {
-                let SipHash(signatures) = self.multicast_signatures
-                    .entry(multicast.seq)
+        match multicast.crypto {
+            MulticastCrypto::SipHash { index, signatures } => {
+                let SipHash(multicast_signatures) = self.multicast_signatures
+                .entry(multicast.seq)
                     .or_insert(SipHash(Default::default()))
-                else {
-                    unreachable!()
-                };
-                let i = u32::from_be_bytes(multicast.signature[1][28..].try_into().unwrap()) as u8;
-                for j in i..u8::min(i + 4, (3 * self.f + 1) as _) {
-                    let offset = (j - i) as usize * 4;
-                    signatures.insert(
-                        j,
-                        multicast.signature[0][offset..offset + 4]
-                            .try_into()
-                            .unwrap(),
-                    );
+                    else {
+                        unreachable!()
+                    };
+                for j in index..u8::min(index + 4, (3 * self.f + 1) as _) {
+                    multicast_signatures.insert(j, signatures[(j - index) as usize]);
                 }
             }
+            MulticastCrypto::P256 {
+                link_hash: None,
+                signature: Some(signature),
+            } => {
+                self.multicast_signatures
+                    .insert(multicast.seq, P256(signature.0, signature.1));
+            }
+            MulticastCrypto::P256 {
+                link_hash: Some(link_hash),
+                signature: None,
+            } => todo!(),
+            MulticastCrypto::P256 { .. } => unreachable!(),
         }
         if !self.multicast_complete(multicast.seq) {
             // println!("incomplete");

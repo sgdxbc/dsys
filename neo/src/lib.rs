@@ -33,7 +33,24 @@ pub struct Request {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Multicast {
     seq: u32,
-    signature: [[u8; 32]; 2],
+    crypto: MulticastCrypto,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum MulticastCrypto {
+    SipHash {
+        index: u8,
+        signatures: [[u8; 4]; 4],
+    },
+    P256 {
+        link_hash: Option<[u8; 32]>,
+        // do this split so `MulticastCrypto` can be `Serialize`
+        // so `Multicast`, `Message::OrderedRequest` can be `Serialize`
+        // so `OrderedRequest` can be kept as a variant of `Message`
+        // so replica can have a simple `NodeEvent<Message>` as event
+        // thus, it can only be `[u8; 64]` if we don't need the last one
+        signature: Option<([u8; 32], [u8; 32])>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,6 +68,83 @@ pub enum Message {
     Reply(Reply),
 }
 
+impl Multicast {
+    pub fn serialize(&self, buf: &mut [u8]) {
+        assert_ne!(self.seq, 0);
+        buf[..4].copy_from_slice(&self.seq.to_be_bytes());
+        match &self.crypto {
+            MulticastCrypto::SipHash { index, signatures } => {
+                buf[5] = *index;
+                for (i, signature) in signatures.iter().enumerate() {
+                    let offset = 5 + i * 4;
+                    buf[offset..offset + 4].copy_from_slice(signature);
+                }
+            }
+            MulticastCrypto::P256 {
+                link_hash: Some(link_hash),
+                signature: None,
+            } => buf[4..36].copy_from_slice(link_hash),
+            MulticastCrypto::P256 {
+                link_hash: None,
+                signature: Some((part_a, part_b)),
+            } => {
+                buf[4..36].copy_from_slice(part_a);
+                buf[36..68].copy_from_slice(part_b);
+            }
+            _ => unimplemented!(),
+        }
+    }
+
+    pub fn deserialize_sip_hash(buf: &[u8]) -> Multicast {
+        let seq = u32::from_be_bytes(buf[..4].try_into().unwrap());
+        let index = buf[5];
+        let mut signatures = [[0; 4]; 4];
+        for (i, signature) in signatures.iter_mut().enumerate() {
+            let offset = 5 + i * 4;
+            signature.copy_from_slice(&buf[offset..offset + 4]);
+        }
+        Multicast {
+            seq,
+            crypto: MulticastCrypto::SipHash { index, signatures },
+        }
+    }
+
+    pub fn deserialize_p256(buf: &[u8]) -> Multicast {
+        let seq = u32::from_be_bytes(buf[..4].try_into().unwrap());
+        let part_a = <[u8; 32]>::try_from(&buf[4..36]).unwrap();
+        let part_b = <[u8; 32]>::try_from(&buf[36..68]).unwrap();
+        let crypto = if part_b == [0; 32] {
+            MulticastCrypto::P256 {
+                link_hash: Some(part_a),
+                signature: None,
+            }
+        } else {
+            MulticastCrypto::P256 {
+                link_hash: None,
+                signature: Some((part_a, part_b)),
+            }
+        };
+        Multicast { seq, crypto }
+    }
+}
+
+impl Message {
+    pub fn is_unicast(buf: &[u8]) -> bool {
+        buf[..4] == [0; 4]
+    }
+
+    fn ordered_request(multicast: Multicast, buf: &[u8]) -> Option<Self> {
+        if let Ok(Message::Request(request)) =
+            bincode::options().allow_trailing_bytes().deserialize(buf)
+        {
+            Some(Message::OrderedRequest(multicast, request))
+        } else {
+            eprintln!("malformed (deserialize)");
+            None
+        }
+    }
+}
+
 pub fn init_socket(socket: &UdpSocket, multicast_ip: Option<Ipv4Addr>) {
     dsys::udp::init_socket(socket);
     if let Some(multicast_ip) = multicast_ip {
@@ -62,93 +156,73 @@ pub fn init_socket(socket: &UdpSocket, multicast_ip: Option<Ipv4Addr>) {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum MulticastCrypto {
+pub enum MulticastCryptoMethod {
     SipHash { id: u8 },
     P256,
 }
 
 pub enum Rx {
     UnicastOnly,
-    Multicast(MulticastCrypto),
+    Multicast(MulticastCryptoMethod),
 }
 
 pub enum RxP256Event {
-    Unicast(Box<[u8]>),   // ..4 trimed
-    Multicast(Box<[u8]>), // not trimed
-}
-
-// transmission format
-// unicast: 4 bytes zero + bincode format `Message`
-// multicast on sender:
-// + 32 bytes precompute digest
-// + 36 bytes zero
-// + bincode format `Message`
-// multicast on receiver:
-// + 4 bytes sequence number
-// + 64 bytes signature
-// + bincode format `Message`
-// (Half)SipHash signature:
-// + 4 bytes MAC1
-// + (optional) 4 bytes each MAC2, MAC3, MAC4
-// + pad to 60 bytes
-// + 4 bytes index of the first MAC
-// secp256k1 signature: 64 bytes compact format
-
-impl Message {
-    fn ordered_request(buf: &[u8]) -> Option<Self> {
-        let multicast = Multicast {
-            seq: u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]),
-            signature: [
-                buf[4..36].try_into().unwrap(),
-                buf[36..68].try_into().unwrap(),
-            ],
-        };
-        let Ok(Message::Request(request)) = bincode::options()
-            .allow_trailing_bytes()
-            .deserialize(&buf[68..])
-        else {
-            eprintln!("malformed (deserialize ordered request)");
-            return None;
-        };
-        Some(Message::OrderedRequest(multicast, request))
-    }
+    Unicast(Message),
+    Multicast(Multicast, Box<[u8]>), // 68..
 }
 
 impl Protocol<RxEvent<'_>> for Rx {
+    // A: verified/dropped, B: need RxP256 to help verify
     type Effect = Multiplex<Option<Message>, RxP256Event>;
 
     fn update(&mut self, event: RxEvent<'_>) -> Self::Effect {
         let RxEvent::Receive(buf) = event;
         // println!("receive {buf:02x?}");
-        if buf[..4] == [0; 4] {
-            return Multiplex::B(RxP256Event::Unicast(buf[4..].into()));
+        if Message::is_unicast(&buf) {
+            return Multiplex::B(RxP256Event::Unicast(
+                // not feel good to repeat this chain
+                // maybe include a `NodeRx<Message>` here?
+                bincode::options()
+                    .allow_trailing_bytes()
+                    .deserialize(&buf[4..])
+                    .unwrap(),
+            ));
         }
+        let multicast;
         match self {
-            Rx::UnicastOnly => Multiplex::A(None),
-            Rx::Multicast(MulticastCrypto::P256) => {
-                Multiplex::B(RxP256Event::Multicast(buf.into()))
-            }
-            Rx::Multicast(MulticastCrypto::SipHash { id }) => {
-                let mut digest = <[u8; 32]>::from(sha2::Sha256::digest(&buf[68..]));
-                digest[..4].copy_from_slice(&buf[..4]);
-                let i = u32::from_be_bytes(buf[64..68].try_into().unwrap()) as u8;
-                if (i..i + 4).contains(id) {
+            Rx::UnicastOnly => return Multiplex::A(None),
+            Rx::Multicast(MulticastCryptoMethod::SipHash { id }) => {
+                multicast = Multicast::deserialize_sip_hash(&buf);
+                let MulticastCrypto::SipHash { index, signatures } = &multicast.crypto else {
+                    unreachable!()
+                };
+                if (*index..*index + 4).contains(id) {
+                    let mut digest = <[u8; 32]>::from(sha2::Sha256::digest(&buf[68..]));
+                    digest[..4].copy_from_slice(&buf[..4]);
                     let mut hasher = SipHasher::new_with_keys(u64::MAX, *id as _);
                     digest.hash(&mut hasher);
                     let expect = &hasher.finish().to_le_bytes()[..4];
-                    let offset = 4 + (*id - i) as usize * 4;
-                    if &buf[offset..offset + 4] != expect {
+                    if signatures[(*id - *index) as usize] != expect {
                         eprintln!(
                             "malformed (siphash) expect {expect:02x?} actual {:02x?}",
-                            &buf[offset..offset + 4],
+                            signatures[(*id - *index) as usize],
                         );
                         return Multiplex::A(None);
                     }
                 }
                 // otherwise, there is no MAC for this receiver in the packet
-                Multiplex::A(Message::ordered_request(&buf))
+            }
+            Rx::Multicast(MulticastCryptoMethod::P256) => {
+                multicast = Multicast::deserialize_p256(&buf);
+                let MulticastCrypto::P256 { signature, .. } = &multicast.crypto else {
+                    unreachable!()
+                };
+                if signature.is_some() {
+                    return Multiplex::B(RxP256Event::Multicast(multicast, buf[68..].into()));
+                }
             }
         }
+        Multiplex::A(Message::ordered_request(multicast, &buf[68..]))
     }
 }
 
@@ -172,30 +246,33 @@ impl Protocol<RxP256Event> for RxP256 {
 
     fn update(&mut self, event: RxP256Event) -> Self::Effect {
         match event {
-            RxP256Event::Unicast(buf) => {
+            RxP256Event::Unicast(message) => {
                 // TODO verify cross replica messages
-                Some(
-                    bincode::options()
-                        .allow_trailing_bytes()
-                        .deserialize(&buf)
-                        .unwrap(),
-                )
+                Some(message)
             }
-            RxP256Event::Multicast(buf) => {
+            RxP256Event::Multicast(multicast, buf) => {
                 let Some(public_key) = &self.multicast else {
                     panic!()
                 };
-                let mut digest = <[u8; 32]>::from(sha2::Sha256::digest(&buf[68..]));
-                digest[..4].copy_from_slice(&buf[..4]);
+                let MulticastCrypto::P256 { link_hash: None, signature: Some(signature) } = &multicast.crypto else {
+                    unreachable!()
+                };
+
+                let mut digest = <[u8; 32]>::from(sha2::Sha256::digest(&buf));
+                digest[..4].copy_from_slice(&multicast.seq.to_be_bytes());
                 let message = secp256k1::Message::from_slice(&digest).unwrap();
-                if Signature::from_compact(&buf[4..68])
+
+                let mut bytes = [0; 64];
+                bytes[..32].copy_from_slice(&signature.0);
+                bytes[32..].copy_from_slice(&signature.1);
+                if Signature::from_compact(&bytes)
                     .map(|signature| self.secp.verify_ecdsa(&message, &signature, public_key))
                     .is_err()
                 {
                     eprintln!("malformed (p256)");
                     None
                 } else {
-                    Message::ordered_request(&buf)
+                    Message::ordered_request(multicast, &buf)
                 }
             }
         }
@@ -211,6 +288,7 @@ impl Protocol<NodeEffect<Message>> for Tx {
     type Effect = TxEvent;
 
     fn update(&mut self, event: NodeEffect<Message>) -> Self::Effect {
+        // TODO extract common serialization as `Message` method
         match event {
             NodeEffect::Broadcast(message) => {
                 let buf = bincode::options().serialize(&message).unwrap();

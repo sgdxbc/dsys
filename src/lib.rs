@@ -1,4 +1,5 @@
 pub mod app;
+pub mod crypto;
 pub mod node;
 pub mod protocol;
 pub mod simulate;

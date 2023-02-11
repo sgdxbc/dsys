@@ -13,7 +13,7 @@ use dsys::{
     protocol::{Generate, Map},
     set_affinity, udp, App, Protocol,
 };
-use neo::{MulticastCrypto, Replica, RxP256};
+use neo::{MulticastCryptoMethod, Replica, RxP256};
 use secp256k1::{Secp256k1, SecretKey};
 
 #[derive(Debug, Parser)]
@@ -33,11 +33,11 @@ fn main() {
     let socket = Arc::new(UdpSocket::bind("0.0.0.0:5000").unwrap());
     neo::init_socket(&socket, Some(cli.multicast));
     let multicast_crypto = match &*cli.crypto {
-        "siphash" => MulticastCrypto::SipHash { id: cli.id },
-        "p256" => MulticastCrypto::P256,
+        "siphash" => MulticastCryptoMethod::SipHash { id: cli.id },
+        "p256" => MulticastCryptoMethod::P256,
         _ => panic!(),
     };
-    let node = Replica::new(cli.id, App::Null(app::Null), cli.f, multicast_crypto);
+    let node = Replica::new(cli.id, App::Null(app::Null), cli.f);
 
     // core 0: udp::Rx -> `rx` -> (_msg_, _p256_)
     let message_channel = channel::unbounded();

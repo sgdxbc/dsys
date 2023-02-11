@@ -15,7 +15,7 @@ struct Cli {
     #[clap(long)]
     multicast: Ipv4Addr,
     #[clap(long)]
-    replica_count: u32,
+    replica_count: u8,
     #[clap(long)]
     crypto: String,
 }
