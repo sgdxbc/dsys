@@ -2,11 +2,6 @@ use std::collections::{HashMap, VecDeque};
 
 use crate::{protocol::Composite, NodeAddr, NodeEffect, NodeEvent, Protocol};
 
-pub enum Progress {
-    DeliverMessage,
-    Halt,
-}
-
 pub struct Simulate<N, M> {
     pub nodes: HashMap<NodeAddr, N>,
     messages: VecDeque<(NodeAddr, M)>,
@@ -39,13 +34,13 @@ impl<N, M> Simulate<N, M> {
         }
     }
 
-    pub fn progress(&mut self) -> Progress
+    pub fn progress(&mut self) -> bool
     where
         N: Protocol<NodeEvent<M>>,
         N::Effect: Composite<Atom = NodeEffect<M>>,
     {
         let Some((destination, message)) = self.messages.pop_front() else {
-            return Progress::Halt;
+            return false;
         };
         let effect = self
             .nodes
@@ -53,7 +48,7 @@ impl<N, M> Simulate<N, M> {
             .unwrap()
             .update(NodeEvent::Handle(message));
         self.push_effect(effect);
-        Progress::DeliverMessage
+        true
     }
 
     pub fn tick(&mut self, addr: NodeAddr)

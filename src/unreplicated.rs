@@ -159,7 +159,7 @@ mod tests {
         app,
         node::Workload,
         protocol::{Map, OneOf},
-        simulate, App,
+        App,
         NodeAddr::{TestClient, TestReplica},
         Protocol, Simulate,
     };
@@ -184,12 +184,7 @@ mod tests {
             ),
         );
         simulate.init();
-        let mut effect;
-        while {
-            effect = simulate.progress();
-            matches!(effect, simulate::Progress::DeliverMessage)
-        } {}
-        assert!(matches!(effect, simulate::Progress::Halt));
+        while simulate.progress() {}
         let OneOf::A(workload) = &simulate.nodes[&TestClient(0)] else {
             unreachable!()
         };

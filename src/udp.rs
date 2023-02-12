@@ -61,29 +61,6 @@ impl From<RxEventOwned> for RxEvent<'static> {
     }
 }
 
-pub struct NodeRx<M>(PhantomData<M>);
-
-impl<M> Default for NodeRx<M> {
-    fn default() -> Self {
-        Self(Default::default())
-    }
-}
-
-impl<M> Protocol<RxEvent<'_>> for NodeRx<M>
-where
-    M: DeserializeOwned,
-{
-    type Effect = M;
-
-    fn update(&mut self, event: RxEvent) -> Self::Effect {
-        let RxEvent::Receive(buf) = event;
-        bincode::options()
-            .allow_trailing_bytes()
-            .deserialize(&buf)
-            .unwrap()
-    }
-}
-
 pub struct Rx(pub Arc<UdpSocket>);
 
 impl Generate for Rx {
@@ -112,9 +89,69 @@ impl Generate for Rx {
 }
 
 pub enum TxEvent {
-    Nop,
     Send(SocketAddr, Box<[u8]>),
     Broadcast(Box<[u8]>),
+}
+
+pub struct Tx {
+    socket: Arc<UdpSocket>,
+    broadcast: Box<[SocketAddr]>,
+}
+
+impl Tx {
+    pub fn new(socket: Arc<UdpSocket>) -> Self {
+        Self {
+            socket,
+            broadcast: Default::default(),
+        }
+    }
+
+    //
+}
+
+impl Protocol<TxEvent> for Tx {
+    type Effect = ();
+
+    fn update(&mut self, event: TxEvent) -> Self::Effect {
+        match event {
+            TxEvent::Send(addr, buf) => {
+                self.socket.send_to(&buf, addr).unwrap();
+            }
+            TxEvent::Broadcast(buf) => {
+                for &addr in &*self.broadcast {
+                    self.socket.send_to(&buf, addr).unwrap();
+                }
+            }
+        }
+    }
+}
+
+// `NodeRx` and `NodeTx` that usually chained with `Rx` and `Tx`
+// certain protocol operates on raw UDP bytes, so the (de)serialization is extracted out
+// they are not generic (de)serialization infrastration because they interact with `Rx/TxEvent`
+// if find a good way to generalize against those, they can be moved to `crate::node`
+
+pub struct NodeRx<M>(PhantomData<M>);
+
+impl<M> Default for NodeRx<M> {
+    fn default() -> Self {
+        Self(Default::default())
+    }
+}
+
+impl<M> Protocol<RxEvent<'_>> for NodeRx<M>
+where
+    M: DeserializeOwned,
+{
+    type Effect = M;
+
+    fn update(&mut self, event: RxEvent) -> Self::Effect {
+        let RxEvent::Receive(buf) = event;
+        bincode::options()
+            .allow_trailing_bytes()
+            .deserialize(&buf)
+            .unwrap()
+    }
 }
 
 pub struct NodeTx<M>(PhantomData<M>);
@@ -141,40 +178,6 @@ where
             NodeEffect::Broadcast(message) => {
                 let buf = bincode::options().serialize(&message).unwrap().into();
                 TxEvent::Broadcast(buf)
-            }
-        }
-    }
-}
-
-pub struct Tx {
-    socket: Arc<UdpSocket>,
-    broadcast: Box<[SocketAddr]>,
-}
-
-impl Tx {
-    pub fn new(socket: Arc<UdpSocket>) -> Self {
-        Self {
-            socket,
-            broadcast: Default::default(),
-        }
-    }
-
-    //
-}
-
-impl Protocol<TxEvent> for Tx {
-    type Effect = ();
-
-    fn update(&mut self, event: TxEvent) -> Self::Effect {
-        match event {
-            TxEvent::Nop => {}
-            TxEvent::Send(addr, buf) => {
-                self.socket.send_to(&buf, addr).unwrap();
-            }
-            TxEvent::Broadcast(buf) => {
-                for &addr in &*self.broadcast {
-                    self.socket.send_to(&buf, addr).unwrap();
-                }
             }
         }
     }

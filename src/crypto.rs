@@ -53,3 +53,31 @@ where
         message
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use secp256k1::KeyPair;
+
+    use super::*;
+
+    #[test]
+    fn test_sign_verify() {
+        #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+        struct M(String, Signature);
+        impl CryptoMessage for M {
+            fn signature(&mut self) -> Option<&mut Signature> {
+                Some(&mut self.1)
+            }
+        }
+        let key_pair = KeyPair::from_seckey_slice(&Secp256k1::new(), &[0xee; 32]).unwrap();
+        let mut message = M(String::from("hello"), Default::default());
+        sign(&mut message, &key_pair.secret_key());
+        let message_clone = message.clone();
+        assert_eq!(
+            verify(message.clone(), &key_pair.public_key()).unwrap(),
+            message_clone
+        );
+        message.0 = String::from("bye");
+        assert!(verify(message, &key_pair.public_key()).is_none());
+    }
+}

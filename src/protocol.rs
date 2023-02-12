@@ -182,6 +182,20 @@ impl<E> ReactiveGenerate<()> for channel::Receiver<E> {
     }
 }
 
+impl<P, E> ReactiveGenerate<E> for P
+where
+    P: Protocol<E>,
+{
+    type Event = P::Effect;
+
+    fn update<Q>(&mut self, event: E, protocol: &mut Q)
+    where
+        Q: Protocol<Self::Event, Effect = ()>,
+    {
+        protocol.update(self.update(event))
+    }
+}
+
 pub enum OneOf<A, B> {
     A(A),
     B(B),
