@@ -17,23 +17,23 @@ async def evaluate(client_count):
         replica_address = None
         client_addresses = []
         for line in addresses:
-            [role, address] = line.split()
+            [role, public_address, address] = line.split()
             if role == 'replica':
-                replica_address = replica_address or address
+                replica_address = replica_address or (public_address, address)
             if role == 'client' and len(client_addresses) < client_count:
-                client_addresses.append(address)
+                client_addresses.append(public_address)
     assert replica_address
     assert len(client_addresses) == client_count
 
     print('clean up', file=stderr)
-    await remote_sync(replica_address, ['pkill', 'unreplicated'])
+    await remote_sync(replica_address[0], ['pkill', 'unreplicated'])
     await gather(*[
         remote_sync(client_address, ['pkill', 'unreplicated'])
         for client_address in client_addresses])
 
     print('launch replica', file=stderr)
     await remote_sync(
-        replica_address, 
+        replica_address[0], 
         ['tmux', 'new-session', '-d', '-s', 'unreplicated', './unreplicated-replica'])
     await sleep(1)
 
@@ -41,7 +41,7 @@ async def evaluate(client_count):
     clients = [
         await remote(
             client_address, 
-            ['./unreplicated-client', replica_address], 
+            ['./unreplicated-client', replica_address[1]], 
             stdout=PIPE, stderr=PIPE)
         for client_address in client_addresses]
 
@@ -53,7 +53,7 @@ async def evaluate(client_count):
 
     # capture output before interrupt?
     print('interrupt replica', file=stderr)
-    await remote_sync(replica_address, ['tmux', 'send-key', '-t', 'unreplicated', 'C-c'])
+    await remote_sync(replica_address[0], ['tmux', 'send-key', '-t', 'unreplicated', 'C-c'])
 
     count = 0
     output_lantecy = True
@@ -73,7 +73,7 @@ async def evaluate(client_count):
         print(count / 10)
 
     print('clean up', file=stderr)
-    await remote_sync(replica_address, ['pkill', 'unreplicated'])
+    await remote_sync(replica_address[0], ['pkill', 'unreplicated'])
     await gather(*[
         remote_sync(client_address, ['pkill', 'unreplicated'])
         for client_address in client_addresses])

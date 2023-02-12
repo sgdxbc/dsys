@@ -11,7 +11,7 @@ except:
 tasks = []
 with open('addresses.txt') as addresses:
     for line in addresses:
-        [role, address] = line.split()
+        [role, address, _] = line.split()
         if role != setup_role:
             continue
         task = Sequential([

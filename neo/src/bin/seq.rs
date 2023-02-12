@@ -72,6 +72,11 @@ fn main() {
                     true
                 }
             });
+            // let mut last_sign = false;
+            // seq.should_link = Box::new(move || {
+            //     last_sign = !last_sign;
+            //     !last_sign
+            // });
             let seq = spawn(move || {
                 set_affinity(0);
                 rx.deploy(&mut seq.then(channel.0))

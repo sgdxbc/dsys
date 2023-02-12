@@ -26,6 +26,8 @@ struct Cli {
     crypto: String,
     #[clap(short)]
     f: usize,
+    #[clap(long)]
+    tx_count: Option<usize>,
 }
 
 fn main() {
@@ -62,7 +64,11 @@ fn main() {
             .deploy(&mut node.then(effect_channel.0))
     });
     // core 2..: (_eff_, _p256_) -> (neo::Tx -> udp::Tx, RxP256 -> _msg_)
-    for i in 2..available_parallelism().unwrap().get() - 1 {
+    // two above, one for IRQ handling
+    let tx_max = available_parallelism().unwrap().get() - 3;
+    let tx_count = cli.tx_count.unwrap_or(tx_max);
+    assert!(tx_count <= tx_max);
+    for i in 2..2 + tx_count {
         let socket = socket.clone();
         let effect_channel = effect_channel.1.clone();
         let p256_channel = p256_channel.1.clone();

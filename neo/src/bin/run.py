@@ -17,13 +17,13 @@ async def evaluate(replica_count, client_count, crypto):
         seq_address = None
         replica_addresses, client_addresses = [], []
         for line in addresses:
-            [role, address] = line.split()
+            [role, public_address, address] = line.split()
             if role == 'replica' and len(replica_addresses) < replica_count:
-                replica_addresses.append(address)
+                replica_addresses.append((public_address, None))
             if role == 'client' and len(client_addresses) < client_count:
-                client_addresses.append(address)
+                client_addresses.append((public_address, None))
             if role == 'seq':
-                seq_address = seq_address or address
+                seq_address = seq_address or (public_address, address)
     assert seq_address is not None
     assert len(replica_addresses) == replica_count
     assert len(client_addresses) == client_count
@@ -31,12 +31,12 @@ async def evaluate(replica_count, client_count, crypto):
 
     print('clean up', file=stderr)
     await gather(*[
-        remote_sync(address, ['pkill', 'neo'])
+        remote_sync(address[0], ['pkill', 'neo'])
         for address in client_addresses + replica_addresses + [seq_address]])
 
     print('launch sequencer', file=stderr)
     await remote_sync(
-        seq_address, [
+        seq_address[0], [
             'tmux', 'new-session', '-d', '-s', 'neo', 
             './neo-seq', 
                 '--multicast', '239.255.1.1', 
@@ -45,12 +45,13 @@ async def evaluate(replica_count, client_count, crypto):
 
     print('launch replicas', file=stderr)
     await gather(*[remote_sync(
-        replica_address, [
+        replica_address[0], [
             'tmux', 'new-session', '-d', '-s', 'neo', 
             './neo-replica', 
                 '--id', str(i), 
                 '--multicast', '239.255.1.1', 
                 '-f', str(f), 
+                # '--tx-count', '5',
                 '--crypto', crypto])
         for i, replica_address in enumerate(replica_addresses)])
 
@@ -60,8 +61,8 @@ async def evaluate(replica_count, client_count, crypto):
     print('launch clients', file=stderr)
     clients = [
         await remote(
-            client_address, [
-                './neo-client', '--seq-ip', seq_address, '-f', str(f)], 
+            client_address[0], [
+                './neo-client', '--seq-ip', seq_address[1], '-f', str(f)], 
             stdout=PIPE, stderr=PIPE)
         for client_address in client_addresses]
 
@@ -74,7 +75,7 @@ async def evaluate(replica_count, client_count, crypto):
     # capture output before interrupt?
     print('interrupt sequencer and replicas', file=stderr)
     await gather(*[
-        remote_sync(address, ['tmux', 'send-key', '-t', 'neo', 'C-c'])
+        remote_sync(address[0], ['tmux', 'send-key', '-t', 'neo', 'C-c'])
         for address in replica_addresses + [seq_address]])
     
     count = 0
@@ -96,7 +97,7 @@ async def evaluate(replica_count, client_count, crypto):
 
     print('clean up', file=stderr)
     await gather(*[
-        remote_sync(address, ['pkill', 'neo'])
+        remote_sync(address[0], ['pkill', 'neo'])
         for address in client_addresses + replica_addresses + [seq_address]])
     return count
 
@@ -104,7 +105,7 @@ if __name__ == '__main__':
     from sys import argv
     from asyncio import run
     if argv[1:2] == ['test']:
-        run(evaluate(16, 10, argv[2]))
+        run(evaluate(1, 80, argv[2]))
     else:
         client_count = 80
         wait = False

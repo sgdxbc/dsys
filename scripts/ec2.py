@@ -4,10 +4,14 @@ import botocore
 import boto3
 
 
-# 172.31.16.0/24
-# subnet = 'subnet-099a59c8b291beba1'
-# 172.31.0.0/24
-subnet = 'subnet-008ff4a08e63a0794'
+region_name = 'ap-east-1'
+subnet = 'subnet-008ff4a08e63a0794'  # 172.31.0.0/24
+# subnet = 'subnet-099a59c8b291beba1'  # 172.31.16.0/24
+image_id = 'ami-0bc44b8dc7cae9c34'
+
+# region_name = 'ap-southeast-1'
+# subnet = 'subnet-7413812d'  # 172.31.0.0/24
+# image_id = 'ami-082b1f4237bd816a1'
 
 def params_replica(i):
     assert i < 254
@@ -15,7 +19,7 @@ def params_replica(i):
     return {
         'SubnetId': subnet,
         'PrivateIpAddress': ip,
-        'ImageId': 'ami-0bc44b8dc7cae9c34',
+        'ImageId': image_id,
         'InstanceType': 'm5.4xlarge',
         'KeyName': 'Ephemeral',
     }
@@ -27,7 +31,7 @@ def params_client(i):
     return {
         'SubnetId': subnet,
         'PrivateIpAddress': ip,
-        'ImageId': 'ami-0bc44b8dc7cae9c34',
+        'ImageId': image_id,
         'InstanceType': 't3.micro',
         'KeyName': 'Ephemeral',
     }
@@ -39,7 +43,7 @@ def params_seq(i):
     return {
         'SubnetId': subnet,
         'PrivateIpAddress': ip,
-        'ImageId': 'ami-0bc44b8dc7cae9c34',
+        'ImageId': image_id,
         'InstanceType': 'm5.2xlarge',
         'KeyName': 'Ephemeral',        
     }
@@ -50,11 +54,10 @@ params = {
     'replica': params_replica,
     'client': params_client,
 }
-ec2 = boto3.resource('ec2', region_name='ap-east-1')
+ec2 = boto3.resource('ec2', region_name=region_name)
 
 def launch(args, dry):
     instances = []
-    addresses = ''
     for arg in args:
         [role, count] = arg.split('=')
         for i in range(int(count)):
@@ -65,23 +68,26 @@ def launch(args, dry):
                     TagSpecifications=[{'ResourceType': 'instance', 'Tags': [{'Key': 'dsys-role', 'Value': role}]}],
                     DryRun=dry,
                 )[0]
-                instances.append(instance)
-                addresses += f'{role:12}{instance.private_ip_address}\n'
+                instances.append((role, instance))
+                # addresses += f'{role:12}{instance.private_ip_address}\n'
 
             except botocore.exceptions.ClientError as err:
                 if err.response['Error']['Code'] != 'DryRunOperation':
                     raise
-    return instances, addresses
+    return instances
 
 
 if sys.argv[1:2] == ['launch']:
     # dry run is not very useful because we launch instances one by one
     # launch(sys.argv[2:], True)
     # print('Dry run finish')
-    instances, addresses = launch(sys.argv[2:], False)
+    instances = launch(sys.argv[2:], False)
+    addresses = ''
     print('requested')
-    for instance in instances:
+    for role, instance in instances:
         instance.wait_until_running()
+        instance.reload()
+        addresses += f'{role:12}{instance.public_ip_address:20}{instance.private_ip_address}\n'
         print('.', end='', flush=True)
     print()
     with open('addresses.txt', 'w') as addresses_file:
