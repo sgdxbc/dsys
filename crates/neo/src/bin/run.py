@@ -51,7 +51,7 @@ async def evaluate(replica_count, client_count, crypto):
                 '--id', str(i), 
                 '--multicast', '239.255.1.1', 
                 '-f', str(f), 
-                # '--tx-count', '5',
+                '--tx-count', '5',
                 '--crypto', crypto])
         for i, replica_address in enumerate(replica_addresses)])
 
@@ -105,7 +105,7 @@ if __name__ == '__main__':
     from sys import argv
     from asyncio import run
     if argv[1:2] == ['test']:
-        run(evaluate(1, 80, argv[2]))
+        run(evaluate(1, 200, argv[2]))
     else:
         client_count = 80
         wait = False

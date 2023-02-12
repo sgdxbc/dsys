@@ -166,33 +166,25 @@ pub trait ReactiveGenerate<E> {
 
     fn update<P>(&mut self, event: E, protocol: &mut P)
     where
+        // want to allow all `P` with `P::Effect: Composite` but cannot compile
         P: Protocol<Self::Event, Effect = ()>;
 }
 
-impl<E> ReactiveGenerate<()> for channel::Receiver<E> {
-    type Event = E;
-
-    fn update<P>(&mut self, _: (), protocol: &mut P)
-    where
-        P: Protocol<Self::Event, Effect = ()>,
-    {
-        for event in self.try_iter() {
-            protocol.update(event)
-        }
-    }
-}
-
-impl<P, E> ReactiveGenerate<E> for P
+impl<Q, E> ReactiveGenerate<E> for Q
 where
-    P: Protocol<E>,
+    Q: Protocol<E>,
+    Q::Effect: Composite,
 {
-    type Event = P::Effect;
+    type Event = <Q::Effect as Composite>::Atom;
 
-    fn update<Q>(&mut self, event: E, protocol: &mut Q)
+    fn update<P>(&mut self, event: E, protocol: &mut P)
     where
-        Q: Protocol<Self::Event, Effect = ()>,
+        P: Protocol<Self::Event>,
     {
-        protocol.update(self.update(event))
+        let mut events = self.update(event);
+        while let Some(event) = events.decompose() {
+            protocol.update(event);
+        }
     }
 }
 
@@ -235,19 +227,33 @@ pub struct EachThen<A, B>(A, B);
 impl<A, B, E> Protocol<E> for EachThen<A, B>
 where
     A: Protocol<E>,
-    B: Protocol<<A::Effect as Composite>::Atom>,
     A::Effect: Composite,
-    B::Effect: Composite,
+    B: Protocol<<A::Effect as Composite>::Atom, Effect = ()>,
 {
     type Effect = B::Effect;
 
     fn update(&mut self, event: E) -> Self::Effect {
-        let mut effect_a = self.0.update(event);
-        let mut effect_b = B::Effect::NOP;
-        while let Some(basic_effect) = effect_a.decompose() {
-            effect_b = effect_b.compose(self.1.update(basic_effect));
-        }
-        effect_b
+        <A as ReactiveGenerate<E>>::update(&mut self.0, event, &mut self.1)
+    }
+}
+
+pub struct GenerateThen<A, B>(A, B);
+
+impl<A, B> Generate for GenerateThen<A, B>
+where
+    A: Generate,
+    B: for<'a> ReactiveGenerate<A::Event<'a>>,
+{
+    // is this lifetime correct?
+    type Event<'a> = <B as ReactiveGenerate<A::Event<'a>>>::Event;
+
+    fn deploy<P>(&mut self, mut protocol: &mut P)
+    where
+        P: for<'a> Protocol<Self::Event<'a>, Effect = ()>,
+    {
+        self.0.deploy(&mut Map(|event: A::Event<'_>| {
+            self.1.update(event, &mut protocol)
+        }))
     }
 }
 
@@ -299,25 +305,5 @@ impl<A, B> Generate for (channel::Receiver<A>, channel::Receiver<B>) {
             }
             disconnected != (true, true)
         } {}
-    }
-}
-
-pub struct GenerateThen<A, B>(A, B);
-
-impl<A, B> Generate for GenerateThen<A, B>
-where
-    A: Generate,
-    B: for<'a> ReactiveGenerate<A::Event<'a>>,
-{
-    // is this lifetime correct?
-    type Event<'a> = <B as ReactiveGenerate<A::Event<'a>>>::Event;
-
-    fn deploy<P>(&mut self, mut protocol: &mut P)
-    where
-        P: for<'a> Protocol<Self::Event<'a>, Effect = ()>,
-    {
-        self.0.deploy(&mut Map(|event: A::Event<'_>| {
-            self.1.update(event, &mut protocol)
-        }))
     }
 }
