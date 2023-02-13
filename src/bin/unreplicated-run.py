@@ -82,7 +82,7 @@ if __name__ == '__main__':
     from sys import argv
     from asyncio import run
     if argv[1:2] == ['test']:
-        run(evaluate(1))
+        run(evaluate(140))
     else:
         for client_count in [1, 2, 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]:
             print(client_count)

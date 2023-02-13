@@ -4,14 +4,16 @@ import botocore
 import boto3
 
 
+profile = 'default'
 region_name = 'ap-east-1'
 subnet = 'subnet-008ff4a08e63a0794'  # 172.31.0.0/24
 # subnet = 'subnet-099a59c8b291beba1'  # 172.31.16.0/24
-image_id = 'ami-0bc44b8dc7cae9c34'
+image_id = 'ami-0bc44b8dc7cae9c34'  # ubuntu 22.04
 
+# profile = 'prof'
 # region_name = 'ap-southeast-1'
 # subnet = 'subnet-7413812d'  # 172.31.0.0/24
-# image_id = 'ami-082b1f4237bd816a1'
+# image_id = 'ami-082b1f4237bd816a1'  # ubuntu 22.04
 
 def params_replica(i):
     assert i < 254
@@ -20,7 +22,7 @@ def params_replica(i):
         'SubnetId': subnet,
         'PrivateIpAddress': ip,
         'ImageId': image_id,
-        'InstanceType': 'm5.2xlarge',
+        'InstanceType': 'm5.4xlarge',
         'KeyName': 'Ephemeral',
     }
 
@@ -54,7 +56,9 @@ params = {
     'replica': params_replica,
     'client': params_client,
 }
+boto3.setup_default_session(profile_name=profile)
 ec2 = boto3.resource('ec2', region_name=region_name)
+
 
 def launch(args, dry):
     instances = []
@@ -65,7 +69,9 @@ def launch(args, dry):
                 instance = ec2.create_instances(
                     **params[role](i), 
                     MinCount=1, MaxCount=1, 
-                    TagSpecifications=[{'ResourceType': 'instance', 'Tags': [{'Key': 'dsys-role', 'Value': role}]}],
+                    TagSpecifications=[
+                        {'ResourceType': 'instance', 
+                        'Tags': [{'Key': 'dsys-role', 'Value': role}]}],
                     DryRun=dry,
                 )[0]
                 instances.append((role, instance))
@@ -77,11 +83,31 @@ def launch(args, dry):
     return instances
 
 
+def terminate():
+    instances = list(ec2.instances.filter(Filters=[
+        {'Name': 'instance-state-name', 'Values': ['running']},  # other states?
+        {'Name': 'tag:dsys-role', 'Values': ['*']}]))
+    for instance in instances:
+        instance.terminate()
+
+    for instance in instances:
+        instance.wait_until_terminated()
+        print('.', end='', flush=True)
+    print()
+    print('terminated')
+
+
 if sys.argv[1:2] == ['launch']:
     # dry run is not very useful because we launch instances one by one
     # launch(sys.argv[2:], True)
     # print('Dry run finish')
-    instances = launch(sys.argv[2:], False)
+
+    try:
+        instances = launch(sys.argv[2:], dry=False)
+    except:
+        terminate()
+        raise
+
     addresses = ''
     print('requested')
     for role, instance in instances:
@@ -93,14 +119,7 @@ if sys.argv[1:2] == ['launch']:
     with open('addresses.txt', 'w') as addresses_file:
         addresses_file.write(addresses)
 elif sys.argv[1:2] == ['terminate']:
-    instances = ec2.instances.filter(Filters=[
-        {'Name': 'instance-state-name', 'Values': ['running']},  # other states?
-        {'Name': 'tag:dsys-role', 'Values': ['*']}])
-    instances.terminate()
-    # for instance in instances:
-    #     instance.wait_until_terminated()
-    #     print('.', end='', flush=True)
-    # print()
+    terminate()
     with open('addresses.txt', 'w') as addresses_file:
         pass  # clear it
 else:
