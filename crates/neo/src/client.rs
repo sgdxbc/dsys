@@ -49,6 +49,7 @@ impl Protocol<ClientEvent<Message>> for Client {
             ClientEvent::Node(NodeEvent::Tick) => {
                 self.op.as_ref()?;
                 self.ticked += 1;
+                assert_ne!(self.ticked, 2); // disallow resend
                 if self.ticked == 1 {
                     return None;
                 }

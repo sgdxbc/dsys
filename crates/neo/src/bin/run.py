@@ -27,7 +27,7 @@ async def evaluate(replica_count, client_count, crypto):
     assert seq_address is not None
     assert len(replica_addresses) == replica_count
     assert len(client_addresses) == client_count
-    f = (replica_count - 1) // 3
+    f = (replica_count - 1) // 2
 
     print('clean up', file=stderr)
     await gather(*[
@@ -64,6 +64,7 @@ async def evaluate(replica_count, client_count, crypto):
             client_address[0], [
                 './neo-client', '--seq-ip', seq_address[1], '-f', str(f)], 
             stdout=PIPE, stderr=PIPE)
+            # stdout=PIPE)
         for client_address in client_addresses]
 
     print('wait clients', end='', flush=True, file=stderr)
@@ -105,7 +106,7 @@ if __name__ == '__main__':
     from sys import argv
     from asyncio import run
     if argv[1:2] == ['test']:
-        run(evaluate(4, 100, argv[2]))
+        run(evaluate(1, 100, argv[2]))
     else:
         client_count = 80
         wait = False

@@ -70,10 +70,10 @@ impl<M> Generate for Lifecycle<M> {
 
         node.update(NodeEvent::Init);
 
-        let mut deadline = Instant::now() + Duration::from_millis(10);
+        let mut deadline = Instant::now() + Duration::from_millis(150);
         while self.running.load(Ordering::SeqCst) {
             if Instant::now() >= deadline {
-                deadline = Instant::now() + Duration::from_millis(10);
+                deadline = Instant::now() + Duration::from_millis(150);
                 node.update(NodeEvent::Tick);
             }
             match self.message_channel.recv_deadline(deadline) {
@@ -82,7 +82,7 @@ impl<M> Generate for Lifecycle<M> {
                 }
                 Err(channel::RecvTimeoutError::Disconnected) => break,
                 Err(channel::RecvTimeoutError::Timeout) => {
-                    deadline = Instant::now() + Duration::from_millis(10);
+                    deadline = Instant::now() + Duration::from_millis(500);
                     node.update(NodeEvent::Tick);
                 }
             }

@@ -114,13 +114,7 @@ impl Replica {
 
     fn handle_request(&mut self, multicast: Multicast, request: Request) -> Effect {
         assert_eq!(multicast.seq, self.multicast_seq);
-        let prev_link = if multicast.seq == 1 {
-            Default::default()
-        } else {
-            I(&self.log)[multicast.seq - 1].next_link
-        };
-        let next_link =
-            sha2::Sha256::digest(&[&multicast.digest[..], &prev_link[..]].concat()).into();
+
         use MulticastSignature::*;
         match multicast.crypto {
             MulticastCrypto::SipHash { index, signatures } => {
@@ -150,29 +144,36 @@ impl Replica {
                 }
             }
             MulticastCrypto::P256 {
-                link_hash: None,
-                signature: Some(signature),
+                link_hash,
+                signature,
             } => {
-                self.multicast_signatures
-                    .insert(multicast.seq, P256(signature.0, signature.1));
-                self.log.push(LogEntry { request, next_link });
-            }
-            MulticastCrypto::P256 {
-                link_hash: Some(link_hash),
-                signature: None,
-            } => {
-                if link_hash != prev_link {
-                    eprintln!("malformed (link hash)");
-                    return Effect::NOP;
+                let prev_link = if multicast.seq == 1 {
+                    Default::default()
+                } else {
+                    I(&self.log)[multicast.seq - 1].next_link
+                };
+                let next_link =
+                    sha2::Sha256::digest(&[&multicast.digest[..], &prev_link[..]].concat()).into();
+                match (link_hash, signature) {
+                    (None, Some(signature)) => {
+                        self.multicast_signatures
+                            .insert(multicast.seq, P256(signature.0, signature.1));
+                        self.log.push(LogEntry { request, next_link });
+                    }
+                    (Some(link_hash), None) => {
+                        if link_hash != prev_link {
+                            eprintln!("malformed (link hash)");
+                            return Effect::NOP;
+                        }
+                        self.log.push(LogEntry { request, next_link });
+                        self.multicast_seq = multicast.seq + 1;
+                    }
+                    _ => unreachable!(),
                 }
-                self.log.push(LogEntry { request, next_link });
-                self.multicast_seq = multicast.seq + 1;
             }
-            MulticastCrypto::P256 { .. } => unreachable!(),
         }
 
         if !self.multicast_verified(multicast.seq) {
-            // println!("incomplete");
             return Effect::NOP;
         }
         self.multicast_seq = multicast.seq + 1;
@@ -215,11 +216,10 @@ impl Replica {
     }
 
     fn report(&self) {
-        if self.id == 0 {
-            println!(
-                "average multicast complete batch size {}",
-                self.log.len() as f32 / self.complete_count as f32
-            )
-        }
+        println!(
+            "average multicast complete batch size {}",
+            self.log.len() as f32 / self.complete_count as f32
+        );
+        println!("reorder sequence count {}", self.reorder_request.len());
     }
 }
