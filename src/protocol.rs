@@ -1,9 +1,18 @@
+use std::borrow::BorrowMut;
+
 use crossbeam::{channel, select};
 
 pub trait Protocol<Event> {
     type Effect;
 
     fn update(&mut self, event: Event) -> Self::Effect;
+
+    fn borrow_mut<P>(&mut self) -> Mut<'_, P>
+    where
+        Self: BorrowMut<P>,
+    {
+        Mut(<Self as BorrowMut<P>>::borrow_mut(self))
+    }
 
     fn then<P>(self, other: P) -> Then<Self, P>
     where
@@ -99,26 +108,27 @@ impl<E> Composite for Vec<E> {
     }
 }
 
-impl<P, E> Protocol<E> for &mut P
+pub struct Mut<'a, T>(&'a mut T);
+
+impl<T, E> Protocol<E> for Mut<'_, T>
 where
-    P: Protocol<E>,
+    T: Protocol<E>,
 {
-    type Effect = P::Effect;
+    type Effect = T::Effect;
 
     fn update(&mut self, event: E) -> Self::Effect {
-        P::update(self, event)
+        self.0.update(event)
     }
 }
 
-pub struct Map<F>(pub F);
-impl<E, F, T> Protocol<E> for Map<F>
+impl<E, F, T> Protocol<E> for F
 where
     F: FnMut(E) -> T,
 {
     type Effect = T;
 
     fn update(&mut self, event: E) -> Self::Effect {
-        (self.0)(event)
+        self(event)
     }
 }
 
@@ -247,13 +257,12 @@ where
     // is this lifetime correct?
     type Event<'a> = <B as ReactiveGenerate<A::Event<'a>>>::Event;
 
-    fn deploy<P>(&mut self, mut protocol: &mut P)
+    fn deploy<P>(&mut self, protocol: &mut P)
     where
         P: for<'a> Protocol<Self::Event<'a>, Effect = ()>,
     {
-        self.0.deploy(&mut Map(|event: A::Event<'_>| {
-            self.1.update(event, &mut protocol)
-        }))
+        self.0
+            .deploy(&mut |event: A::Event<'_>| self.1.update(event, protocol))
     }
 }
 

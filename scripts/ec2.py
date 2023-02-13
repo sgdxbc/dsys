@@ -20,7 +20,7 @@ def params_replica(i):
         'SubnetId': subnet,
         'PrivateIpAddress': ip,
         'ImageId': image_id,
-        'InstanceType': 'm5.4xlarge',
+        'InstanceType': 'm5.2xlarge',
         'KeyName': 'Ephemeral',
     }
 

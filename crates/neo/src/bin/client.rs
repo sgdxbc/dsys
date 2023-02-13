@@ -14,7 +14,7 @@ use clap::Parser;
 use crossbeam::channel;
 use dsys::{
     node::{Lifecycle, Workload, WorkloadMode},
-    protocol::{Generate, Map},
+    protocol::Generate,
     udp, NodeAddr, Protocol,
 };
 use neo::{Client, RxP256Event};
@@ -58,8 +58,8 @@ fn main() {
         rx.deploy(
             &mut neo::Rx::UnicastOnly
                 .then((
-                    Map(|_| unreachable!()), // receive multicast
-                    Map(|event| {
+                    |_| unreachable!(), // receive multicast
+                    (|event| {
                         if let RxP256Event::Unicast(message) = event {
                             message
                         } else {
@@ -68,7 +68,7 @@ fn main() {
                     })
                     .then(message_channel.0),
                 ))
-                .then(Map(Into::into)),
+                .then(Into::into),
         )
     });
 
@@ -82,7 +82,7 @@ fn main() {
         let event_channel = message_channel.1.clone();
         move || {
             Lifecycle::new(event_channel, running).deploy(
-                &mut (&mut node).each_then(
+                &mut node.borrow_mut().each_then(
                     neo::Tx {
                         multicast: Some((cli.seq_ip, 5001).into()),
                     }

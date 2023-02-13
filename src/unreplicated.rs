@@ -158,7 +158,7 @@ mod tests {
     use crate::{
         app,
         node::Workload,
-        protocol::{Map, OneOf},
+        protocol::OneOf,
         App,
         NodeAddr::{TestClient, TestReplica},
         Protocol, Simulate,
@@ -180,7 +180,7 @@ mod tests {
             TestReplica(0),
             OneOf::B(
                 Replica::new(App::Echo(app::Echo))
-                    .then(Map(|effect: Option<_>| effect.into_iter().collect())),
+                    .then(|effect: Option<_>| effect.into_iter().collect()),
             ),
         );
         simulate.init();

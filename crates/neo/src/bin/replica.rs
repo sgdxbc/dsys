@@ -7,12 +7,7 @@ use std::{
 
 use clap::Parser;
 use crossbeam::channel;
-use dsys::{
-    app,
-    node::Lifecycle,
-    protocol::{Generate, Map},
-    set_affinity, udp, App, Protocol,
-};
+use dsys::{app, node::Lifecycle, protocol::Generate, set_affinity, udp, App, Protocol};
 use neo::{MulticastCryptoMethod, Replica, RxP256};
 use secp256k1::{Secp256k1, SecretKey};
 
@@ -52,7 +47,7 @@ fn main() {
             udp::Rx(socket).deploy(
                 &mut neo::Rx::Multicast(multicast_crypto)
                     .then((message_channel, p256_channel.0))
-                    .then(Map(Into::into)),
+                    .then(Into::into),
             )
         }
     });
@@ -77,7 +72,7 @@ fn main() {
             set_affinity(i);
             (effect_channel, p256_channel).deploy(
                 &mut (
-                    Map(identity).each_then(neo::Tx { multicast: None }.then(udp::Tx::new(socket))),
+                    identity.each_then(neo::Tx { multicast: None }.then(udp::Tx::new(socket))),
                     RxP256::new(Some(
                         SecretKey::from_slice(&[b"seq", &[0; 29][..]].concat())
                             .unwrap()
@@ -85,7 +80,7 @@ fn main() {
                     ))
                     .then(message_channel),
                 )
-                    .then(Map(Into::into)),
+                    .then(Into::into),
             )
         });
     }

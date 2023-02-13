@@ -7,10 +7,7 @@ use std::{
 
 use clap::Parser;
 use crossbeam::channel;
-use dsys::{
-    protocol::{Generate, Map},
-    set_affinity, udp, Protocol,
-};
+use dsys::{protocol::Generate, set_affinity, udp, Protocol};
 use neo::{seq, Sequencer};
 use secp256k1::SecretKey;
 
@@ -37,10 +34,10 @@ fn main() {
         "siphash" => {
             let channel = channel::unbounded();
             let mut seq = Sequencer::default()
-                .then(Map(|(buf, should_link): (_, bool)| {
+                .then(|(buf, should_link): (_, bool)| {
                     assert!(!should_link);
                     buf
-                }))
+                })
                 .then(channel.0);
             let seq = spawn(move || {
                 set_affinity(0);
