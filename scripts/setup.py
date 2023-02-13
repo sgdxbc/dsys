@@ -4,7 +4,7 @@ from subprocess import DEVNULL
 
 params = {
     'replica': {'interface': 'ens5', '#core': 16},
-    'seq': {'interface': 'ens5', '#core': 8},
+    'seq': {'interface': 'ens5', '#core': 16},
 }
 
 
@@ -18,10 +18,10 @@ async def setup_remote(address, param):
     await remote(
         address, 
         f"for i in $(seq {param['#core'] // 2} {param['#core'] - 1}); do "
-            "echo 0 | sudo tee /sys/devices/system/cpu/cpu$i/online; done &&"
+            "echo 0 | sudo tee /sys/devices/system/cpu/cpu$i/online; done && "
         f"sudo ethtool -L {param['interface']} combined 1 && "
-        f"echo IRQBALANCE_BANNED_CPULIST=0-{param['#core'] // 2 - 2}| sudo tee /etc/default/irqbalance && "
-        "sudo service irqbalance restart && "
+        "sudo service irqbalance stop && "
+        f"IRQBALANCE_BANNED_CPULIST=0-{param['#core'] // 2 - 2} sudo -E irqbalance --oneshot && "
         f"sudo sysctl net.ipv4.conf.{param['interface']}.force_igmp_version=2")
 
 

@@ -46,7 +46,7 @@ def params_seq(i):
         'SubnetId': subnet,
         'PrivateIpAddress': ip,
         'ImageId': image_id,
-        'InstanceType': 'm5.2xlarge',
+        'InstanceType': 'm5.4xlarge',
         'KeyName': 'Ephemeral',        
     }
 

@@ -72,6 +72,10 @@ impl<M> Generate for Lifecycle<M> {
 
         let mut deadline = Instant::now() + Duration::from_millis(10);
         while self.running.load(Ordering::SeqCst) {
+            if Instant::now() >= deadline {
+                deadline = Instant::now() + Duration::from_millis(10);
+                node.update(NodeEvent::Tick);
+            }
             match self.message_channel.recv_deadline(deadline) {
                 Ok(message) => {
                     node.update(NodeEvent::Handle(message));
