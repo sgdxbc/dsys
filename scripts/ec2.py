@@ -51,10 +51,23 @@ def params_seq(i):
     }
 
 
+def params_relay(i):
+    assert i < 128
+    ip = f'172.31.15.{1 + i}'
+    return {
+        'SubnetId': subnet,
+        'PrivateIpAddress': ip,
+        'ImageId': image_id,
+        'InstanceType': 'm5.2xlarge',
+        'KeyName': 'Ephemeral',
+    }
+
+
 params = {
     'seq': params_seq,
     'replica': params_replica,
     'client': params_client,
+    'relay': params_relay,
 }
 boto3.setup_default_session(profile_name=profile)
 ec2 = boto3.resource('ec2', region_name=region_name)
@@ -69,8 +82,8 @@ def launch(args, dry):
                 instance = ec2.create_instances(
                     **params[role](i), 
                     MinCount=1, MaxCount=1, 
-                    TagSpecifications=[
-                        {'ResourceType': 'instance', 
+                    TagSpecifications=[{
+                        'ResourceType': 'instance', 
                         'Tags': [{'Key': 'dsys-role', 'Value': role}]}],
                     DryRun=dry,
                 )[0]

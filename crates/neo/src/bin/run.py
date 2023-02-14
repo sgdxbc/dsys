@@ -12,12 +12,34 @@ async def remote_sync(address, args):
     await p.wait()
     return p.returncode
 
+async def setup_relay(address, multicast_address):
+    code = await remote_sync(address, ['sudo', 'apt-get', 'install', '--yes', 'socat'])
+    assert code == 0
+    code = await remote_sync(
+        address, [
+            'tmux', 'new-session', '-d', '-s', 'neo'
+            'socat', 'udp4-recv:5001,ip-add-membership=239.255.1.1:ens5', f'udp4:{multicast_address}:5000'])
+    assert code == 0
+
+async def prepare_relay():
+    i = 1
+    tasks = []
+    with open('address.txt') as addresses:
+        for line in addresses:
+            [role, public_address, _] = line.split()
+            if role == 'relay':
+                tasks.append(setup_relay(public_address, f'239.255.2.{i}'))
+                i += 1
+    await gather(*tasks)
+
+
 async def evaluate(f, client_count, crypto):
     replica_count = 2 * f + 1  # f replicas keep silence
 
     with open('addresses.txt') as addresses:
         seq_address = None
         replica_addresses, client_addresses = [], []
+        relay_count = 0
         for line in addresses:
             [role, public_address, address] = line.split()
             if role == 'replica' and len(replica_addresses) < replica_count:
@@ -26,6 +48,8 @@ async def evaluate(f, client_count, crypto):
                 client_addresses.append((public_address, None))
             if role == 'seq':
                 seq_address = seq_address or (public_address, address)
+            if role == 'relay':
+                relay_count += 1
     assert seq_address is not None
     assert len(replica_addresses) == replica_count
     assert len(client_addresses) == client_count
@@ -46,13 +70,24 @@ async def evaluate(f, client_count, crypto):
                 '--replica-count', str(3 * f + 1),
                 '--crypto', crypto])
 
+    relay_i = 1
+    def assign_multicast():
+        nonlocal relay_i
+        if relay_count == 0:
+            return '239.255.1.1'
+        group = f'239.255.2.{relay_i}'
+        if relay_i == relay_count:
+            relay_i = 0
+        relay_i += 1
+        return group
+
     print('launch replicas', file=stderr)
     await gather(*[remote_sync(
         replica_address[0], [
             'tmux', 'new-session', '-d', '-s', 'neo', 
             './neo-replica', 
                 '--id', str(i), 
-                '--multicast', '239.255.1.1', 
+                '--multicast', assign_multicast(), 
                 '-f', str(f), 
                 # '--tx-count', '5',
                 '--crypto', crypto])
@@ -109,7 +144,7 @@ if __name__ == '__main__':
     from sys import argv
     from asyncio import run
     if argv[1:2] == ['test']:
-        run(evaluate(0, 1, argv[2]))
+        run(evaluate(5, 100, argv[2]))
     else:
         client_count = 80
         for replica_count in [1, 4, 7, 10, 13, 16]:
