@@ -3,9 +3,8 @@ use std::{
     net::SocketAddr,
 };
 
-use crossbeam::channel;
 use dsys::{
-    protocol::Generate,
+    protocol::ReactiveGenerate,
     udp::{RxEvent, TxEvent},
     Protocol,
 };
@@ -33,53 +32,50 @@ impl Protocol<RxEvent<'_>> for Sequencer {
     type Effect = (Box<[u8]>, bool);
 
     fn update(&mut self, event: RxEvent<'_>) -> Self::Effect {
-        let RxEvent::Receive(mut buf) = event;
+        let RxEvent::Receive(buf) = event;
+        let mut buf = <Box<[_]>>::from(buf);
         self.seq += 1;
-        buf.to_mut()[..4].copy_from_slice(&self.seq.to_be_bytes());
-        buf.to_mut()[32..64].copy_from_slice(&self.link_hash);
+        buf[..4].copy_from_slice(&self.seq.to_be_bytes());
+        buf[32..64].copy_from_slice(&self.link_hash);
         self.link_hash = sha2::Sha256::digest(&buf[..64]).into();
         let should_link = (self.should_link)();
         if should_link {
-            buf.to_mut().copy_within(32..64, 4);
-            buf.to_mut()[36..68].copy_from_slice(&[0; 32]);
+            buf.copy_within(32..64, 4);
+            buf[36..68].copy_from_slice(&[0; 32]);
         }
-        (buf.into(), should_link)
+        (buf, should_link)
     }
 }
 
 pub struct SipHash {
-    pub channel: channel::Receiver<Box<[u8]>>,
     pub multicast_addr: SocketAddr,
     pub replica_count: u8,
 }
 
-impl Generate for SipHash {
-    type Event<'a> = TxEvent;
+impl ReactiveGenerate<Box<[u8]>> for SipHash {
+    type Event = TxEvent;
 
-    fn deploy<P>(&mut self, protocol: &mut P)
+    fn update<P>(&mut self, buf: Box<[u8]>, protocol: &mut P)
     where
-        P: for<'a> Protocol<Self::Event<'a>, Effect = ()>,
+        P: for<'a> Protocol<Self::Event, Effect = ()>,
     {
-        for buf in self.channel.iter() {
+        let mut index = 0;
+        while index < self.replica_count {
+            let mut buf = buf.clone();
             let mut signatures = [0; 16];
-            let mut index = 0;
-            while index < self.replica_count {
-                let mut buf = buf.clone();
-                for j in index..u8::min(index + 4, self.replica_count) {
-                    let mut hasher = SipHasher::new_with_keys(u64::MAX, j as _);
-                    buf[..32].hash(&mut hasher);
+            for j in index..u8::min(index + 4, self.replica_count) {
+                let mut hasher = SipHasher::new_with_keys(u64::MAX, j as _);
+                buf[..32].hash(&mut hasher);
 
-                    let offset = (j - index) as usize * 4;
-                    signatures[offset..offset + 4]
-                        .copy_from_slice(&hasher.finish().to_le_bytes()[..4]);
-                    // println!("signature[{j}] {:02x?}", &signatures[offset..offset + 4]);
-                }
-                buf[4] = index;
-                buf[5..21].copy_from_slice(&signatures);
-
-                protocol.update(TxEvent::Send(self.multicast_addr, buf));
-                index += 4;
+                let offset = (j - index) as usize * 4;
+                signatures[offset..offset + 4].copy_from_slice(&hasher.finish().to_le_bytes()[..4]);
+                // println!("signature[{j}] {:02x?}", &signatures[offset..offset + 4]);
             }
+            buf[4] = index;
+            buf[5..21].copy_from_slice(&signatures);
+
+            protocol.update(TxEvent::Send(self.multicast_addr, buf));
+            index += 4;
         }
     }
 }

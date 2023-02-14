@@ -156,6 +156,13 @@ pub trait Generate {
     fn deploy<P>(&mut self, protocol: &mut P)
     where
         P: for<'a> Protocol<Self::Event<'a>, Effect = ()>;
+
+    fn then<G>(self, other: G) -> GenerateThen<Self, G>
+    where
+        Self: Sized,
+    {
+        GenerateThen(self, other)
+    }
 }
 
 impl<E> Generate for channel::Receiver<E> {

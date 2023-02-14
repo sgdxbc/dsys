@@ -43,18 +43,18 @@ fn main() {
                 set_affinity(0);
                 rx.deploy(&mut seq);
             });
-            for i in 1..available_parallelism().unwrap().get() - 1 {
-                let mut tx = seq::SipHash {
-                    channel: channel.1.clone(),
-                    multicast_addr,
-                    replica_count: cli.replica_count,
-                };
-                let socket = socket.clone();
-                let _tx = spawn(move || {
-                    set_affinity(i);
-                    tx.deploy(&mut udp::Tx::new(socket));
-                });
-            }
+
+            let _tx = spawn(move || {
+                set_affinity(1);
+                channel
+                    .1
+                    .then(seq::SipHash {
+                        multicast_addr,
+                        replica_count: cli.replica_count,
+                    })
+                    .deploy(&mut udp::Tx::new(socket));
+            });
+
             seq.join().unwrap()
         }
         "p256" => {

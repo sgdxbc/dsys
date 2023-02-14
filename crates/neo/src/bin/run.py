@@ -12,7 +12,9 @@ async def remote_sync(address, args):
     await p.wait()
     return p.returncode
 
-async def evaluate(replica_count, client_count, crypto):
+async def evaluate(f, client_count, crypto):
+    replica_count = 2 * f + 1  # f replicas keep silence
+
     with open('addresses.txt') as addresses:
         seq_address = None
         replica_addresses, client_addresses = [], []
@@ -27,7 +29,6 @@ async def evaluate(replica_count, client_count, crypto):
     assert seq_address is not None
     assert len(replica_addresses) == replica_count
     assert len(client_addresses) == client_count
-    f = (replica_count - 1) // 2
 
     print('clean up', file=stderr)
     await gather(*[
@@ -40,7 +41,9 @@ async def evaluate(replica_count, client_count, crypto):
             'tmux', 'new-session', '-d', '-s', 'neo', 
             './neo-seq', 
                 '--multicast', '239.255.1.1', 
-                '--replica-count', str(replica_count),
+                # not `replica_count` here
+                # the 2f + 1 replicas each need to rx 3f + 1 siphash signatures
+                '--replica-count', str(3 * f + 1),
                 '--crypto', crypto])
 
     print('launch replicas', file=stderr)
@@ -106,7 +109,7 @@ if __name__ == '__main__':
     from sys import argv
     from asyncio import run
     if argv[1:2] == ['test']:
-        run(evaluate(1, 100, argv[2]))
+        run(evaluate(2, 100, argv[2]))
     else:
         client_count = 80
         wait = False

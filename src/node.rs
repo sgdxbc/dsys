@@ -67,13 +67,13 @@ impl<M> Generate for Lifecycle<M> {
         P: for<'a> Protocol<Self::Event<'a>>,
     {
         assert!(!self.running.swap(true, Ordering::SeqCst));
-
         node.update(NodeEvent::Init);
 
-        let mut deadline = Instant::now() + Duration::from_millis(150);
+        let tick_interval = Duration::from_millis(10);
+        let mut deadline = Instant::now() + tick_interval;
         while self.running.load(Ordering::SeqCst) {
             if Instant::now() >= deadline {
-                deadline = Instant::now() + Duration::from_millis(150);
+                deadline = Instant::now() + tick_interval;
                 node.update(NodeEvent::Tick);
             }
             match self.message_channel.recv_deadline(deadline) {
@@ -82,7 +82,7 @@ impl<M> Generate for Lifecycle<M> {
                 }
                 Err(channel::RecvTimeoutError::Disconnected) => break,
                 Err(channel::RecvTimeoutError::Timeout) => {
-                    deadline = Instant::now() + Duration::from_millis(500);
+                    deadline = Instant::now() + tick_interval;
                     node.update(NodeEvent::Tick);
                 }
             }
