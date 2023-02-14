@@ -1,7 +1,10 @@
 use std::{
     convert::identity,
     net::{Ipv4Addr, UdpSocket},
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     thread::{available_parallelism, spawn},
 };
 
@@ -26,6 +29,8 @@ struct Cli {
 }
 
 fn main() {
+    udp::capture_interrupt();
+
     let cli = Cli::parse();
     let socket = Arc::new(UdpSocket::bind("0.0.0.0:5000").unwrap());
     neo::init_socket(&socket, Some(cli.multicast));
@@ -39,7 +44,7 @@ fn main() {
     // core 0: udp::Rx -> `rx` -> (_msg_, _p256_)
     let message_channel = channel::unbounded();
     let p256_channel = channel::unbounded();
-    let _rx = spawn({
+    let rx = spawn({
         let message_channel = message_channel.0.clone();
         let socket = socket.clone();
         move || {
@@ -53,10 +58,13 @@ fn main() {
     });
     // core 1: _msg_ ~> Lifecycle -> `node` -> _eff_
     let effect_channel = channel::unbounded();
-    let node = spawn(move || {
-        set_affinity(1);
-        Lifecycle::new(message_channel.1, Default::default())
-            .deploy(&mut node.then(effect_channel.0))
+    let running = Arc::new(AtomicBool::new(false));
+    let node = spawn({
+        let running = running.clone();
+        move || {
+            set_affinity(1);
+            Lifecycle::new(message_channel.1, running).deploy(&mut node.then(effect_channel.0))
+        }
     });
     // core 2..: (_eff_, _p256_) -> (neo::Tx -> udp::Tx, RxP256 -> _msg_)
     // two above, one for IRQ handling
@@ -85,5 +93,7 @@ fn main() {
         });
     }
 
+    rx.join().unwrap();
+    running.store(false, Ordering::SeqCst);
     node.join().unwrap()
 }

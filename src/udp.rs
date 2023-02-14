@@ -1,10 +1,15 @@
 use std::{
     borrow::Cow,
+    ffi::c_int,
     marker::PhantomData,
     net::{SocketAddr, ToSocketAddrs, UdpSocket},
     os::fd::AsRawFd,
     panic::panic_any,
-    sync::Arc,
+    process::abort,
+    sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc,
+    },
 };
 
 use bincode::Options;
@@ -12,7 +17,9 @@ use bincode::Options;
 use nix::{
     errno::Errno,
     poll::{ppoll, PollFd, PollFlags},
-    sys::signal::{SigSet, Signal::SIGINT},
+    sys::signal::{
+        pthread_sigmask, sigaction, SaFlags, SigAction, SigHandler, SigSet, SigmaskHow, Signal,
+    },
 };
 use serde::{de::DeserializeOwned, Serialize};
 
@@ -72,10 +79,8 @@ impl Generate for Rx {
     {
         let mut buf = [0; 1500];
         let poll_fd = PollFd::new(self.0.as_raw_fd(), PollFlags::POLLIN);
-        let sigmask = SigSet::from_iter([SIGINT].into_iter());
-        // can have exit condition
-        loop {
-            match ppoll(&mut [poll_fd], None, Some(sigmask)) {
+        while COUNT.load(Ordering::SeqCst) == 0 {
+            match ppoll(&mut [poll_fd], None, Some(SigSet::empty())) {
                 Err(Errno::EINTR) => break,
                 Err(err) => panic_any(err),
                 Ok(_) => {
@@ -86,6 +91,35 @@ impl Generate for Rx {
             }
         }
     }
+}
+
+static COUNT: AtomicU32 = AtomicU32::new(0);
+
+pub fn capture_interrupt() {
+    extern "C" fn handle(_: c_int) {
+        if COUNT.fetch_add(1, Ordering::SeqCst) == 0 {
+            eprintln!("first interruption captured")
+        } else {
+            abort()
+        }
+    }
+    unsafe {
+        sigaction(
+            Signal::SIGINT,
+            &SigAction::new(
+                SigHandler::Handler(handle),
+                SaFlags::empty(),
+                SigSet::empty(),
+            ),
+        )
+    }
+    .unwrap();
+    pthread_sigmask(
+        SigmaskHow::SIG_BLOCK,
+        Some(&SigSet::from_iter([Signal::SIGINT].into_iter())),
+        None,
+    )
+    .unwrap();
 }
 
 pub enum TxEvent {
@@ -126,7 +160,7 @@ impl Protocol<TxEvent> for Tx {
     }
 }
 
-// `NodeRx` and `NodeTx` that usually chained with `Rx` and `Tx`
+// `NodeRx` and `NodeTx` that usually equipped with `Rx` and `Tx`
 // certain protocol operates on raw UDP bytes, so the (de)serialization is extracted out
 // they are not generic (de)serialization infrastration because they interact with `Rx/TxEvent`
 // if find a good way to generalize against those, they can be moved to `crate::node`

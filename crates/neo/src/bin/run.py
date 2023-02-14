@@ -58,8 +58,8 @@ async def evaluate(f, client_count, crypto):
                 '--crypto', crypto])
         for i, replica_address in enumerate(replica_addresses)])
 
-    print('wait replicas to join multicast group', file=stderr)
-    await sleep(10)
+    print('pending multicast group ready', file=stderr)
+    await sleep(8)
 
     print('launch clients', file=stderr)
     clients = [
@@ -109,16 +109,10 @@ if __name__ == '__main__':
     from sys import argv
     from asyncio import run
     if argv[1:2] == ['test']:
-        run(evaluate(2, 100, argv[2]))
+        run(evaluate(0, 1, argv[2]))
     else:
         client_count = 80
-        wait = False
         for replica_count in [1, 4, 7, 10, 13, 16]:
-            if wait:
-                print('wait to prevent interference between runs', file=stderr)
-                run(sleep(20))
-            else:
-                wait = True
             print(replica_count, client_count)
             retry = True
             while retry:
