@@ -11,7 +11,8 @@ use dsys::{protocol::Generate, set_affinity, udp, Protocol};
 fn main() {
     udp::capture_interrupt();
     let socket = Arc::new(UdpSocket::bind("0.0.0.0:5000").unwrap());
-    neo::init_socket(&socket, Some([239, 255, 1, 1].into()));
+    // neo::init_socket(&socket, Some([239, 255, 1, 1].into()));
+    udp::init_socket(&socket);
     let subscribers = args()
         .skip(1)
         .map(|ip| SocketAddr::new(ip.parse().unwrap(), 5000))

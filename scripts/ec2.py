@@ -53,12 +53,12 @@ def params_seq(i):
 
 def params_relay(i):
     assert i < 128
-    ip = f'172.31.15.{1 + i}'
+    ip = f'172.31.14.{1 + i}'
     return {
         'SubnetId': subnet,
         'PrivateIpAddress': ip,
         'ImageId': image_id,
-        'InstanceType': 'm5.8xlarge',
+        'InstanceType': 'm5.4xlarge',
         'KeyName': 'Ephemeral',
     }
 

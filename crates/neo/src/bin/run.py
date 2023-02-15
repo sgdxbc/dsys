@@ -48,7 +48,7 @@ async def evaluate(f, client_count, crypto):
             if role == 'seq':
                 seq_address = seq_address or (public_address, address)
             if role == 'relay':
-                relay_addresses.append((public_address, None))
+                relay_addresses.append((public_address, address))
     assert seq_address is not None
     assert len(replica_addresses) == replica_count
     assert len(client_addresses) == client_count
@@ -64,14 +64,29 @@ async def evaluate(f, client_count, crypto):
         seq_address[0], [
             'tmux', 'new-session', '-d', '-s', 'neo', 
             './neo-seq', 
-                '--multicast', '239.255.1.1', 
+                # '--multicast', '239.255.1.1', 
+                '--multicast', relay_addresses[0][1], 
                 # not `replica_count` here
                 # the 2f + 1 replicas each need to rx 3f + 1 siphash signatures
                 '--replica-count', str(3 * f + 1),
                 '--crypto', crypto])
 
     print('launch relays', file=stderr)
-    relay_count = len(relay_addresses)
+    # layer 1: seq -> relay[0] -> relay[1..5]
+    await remote_sync(
+        relay_addresses[0][0], [
+            'tmux', 'new-session', '-d', '-s', 'neo', 
+            './neo-relay', *[address[1] for address in relay_addresses[1:5]]])
+    # layer 2: relay[0] -> relay[1..5] -> relay[5..21]
+    await gather(*[
+        remote_sync(
+            relay_address[0], [
+                'tmux', 'new-session', '-d', '-s', 'neo',
+                './neo-relay', *[address[1] for address in relay_addresses[5 + 4 * i : 5 + 4 * (i + 1)]]])
+        for i, relay_address in enumerate(relay_addresses[1:5])
+    ])
+    # layer 3: relay[1..5] -> relay[5..21] -> replicas
+    relay_count = len(relay_addresses) - 5
     async def launch(i, address):
         send_addresses = [
             address[1] for address in
@@ -79,10 +94,10 @@ async def evaluate(f, client_count, crypto):
         await remote_sync(
             address, [
                 'tmux', 'new-session', '-d', '-s', 'neo', './neo-relay', *send_addresses])
-    await gather(*[launch(i, address[0]) for i, address in enumerate(relay_addresses)])
+    await gather(*[launch(i, address[0]) for i, address in enumerate(relay_addresses[5:])])
 
-    print('pending multicast group ready', file=stderr)
-    await sleep(10)
+    # print('pending multicast group ready', file=stderr)
+    # await sleep(10)
 
     print('launch replicas', file=stderr)
     await gather(*[remote_sync(
@@ -145,11 +160,24 @@ if __name__ == '__main__':
     from sys import argv
     from asyncio import run
     if argv[1:2] == ['test']:
-        run(evaluate(2, 100, argv[2]))
+        run(evaluate(0, 100, argv[2]))
     else:
-        client_count = 80
-        for replica_count in [1, 4, 7, 10, 13, 16]:
-            print(replica_count, client_count)
-            retry = True
-            while retry:
+        # client_count = 90
+        # for replica_count in range(1, 34, 4):
+        #     print(replica_count, client_count)
+        #     retry = True
+        #     while retry:
+        #         retry = run(evaluate(replica_count, client_count, argv[1])) is None
+
+        client_count = 90
+        for replica_count in range(1, 34, 4):
+            step = 10
+            for _ in range(10):
+                print(replica_count, client_count)
                 retry = run(evaluate(replica_count, client_count, argv[1])) is None
+                if retry:
+                    client_count -= step
+                    client_count = max(client_count, 1)
+                else:
+                    step = max(step // 2, 1)
+                    client_count += step

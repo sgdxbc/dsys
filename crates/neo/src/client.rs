@@ -49,14 +49,15 @@ impl Protocol<ClientEvent<Message>> for Client {
             ClientEvent::Node(NodeEvent::Tick) => {
                 self.op.as_ref()?;
                 self.ticked += 1;
-                assert_ne!(self.ticked, 63); // approx 630ms
-                if self.ticked == 1 || !self.ticked.is_power_of_two() {
-                    return None;
-                }
-                if self.ticked == 2 {
-                    eprintln!("resend");
-                }
-                Some(self.do_request())
+                assert_ne!(self.ticked, 100);
+                // if self.ticked == 1 || !self.ticked.is_power_of_two() {
+                // if self.ticked == 1 {
+                return None;
+                // }
+                // if self.ticked == 2 {
+                //     eprintln!("resend");
+                // }
+                // Some(self.do_request())
             }
             ClientEvent::Node(NodeEvent::Handle(Message::Reply(reply))) => {
                 // dbg!(&reply);
