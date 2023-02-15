@@ -58,7 +58,7 @@ def params_relay(i):
         'SubnetId': subnet,
         'PrivateIpAddress': ip,
         'ImageId': image_id,
-        'InstanceType': 'm5.2xlarge',
+        'InstanceType': 'm5.8xlarge',
         'KeyName': 'Ephemeral',
     }
 

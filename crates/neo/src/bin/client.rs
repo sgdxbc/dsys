@@ -86,7 +86,7 @@ fn main() {
                     neo::Tx {
                         multicast: Some((cli.seq_ip, 5001).into()),
                     }
-                    .then(udp::Tx::new(socket)),
+                    .then(udp::Tx::new(socket, Default::default())),
                 ),
             );
             node

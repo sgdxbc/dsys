@@ -33,7 +33,8 @@ fn main() {
 
     let cli = Cli::parse();
     let socket = Arc::new(UdpSocket::bind("0.0.0.0:5000").unwrap());
-    neo::init_socket(&socket, Some(cli.multicast));
+    // neo::init_socket(&socket, Some(cli.multicast));
+    udp::init_socket(&socket);
     let multicast_crypto = match &*cli.crypto {
         "siphash" => MulticastCryptoMethod::SipHash { id: cli.id },
         "p256" => MulticastCryptoMethod::P256,
@@ -80,7 +81,10 @@ fn main() {
             set_affinity(i);
             (effect_channel, p256_channel).deploy(
                 &mut (
-                    identity.each_then(neo::Tx { multicast: None }.then(udp::Tx::new(socket))),
+                    // TODO fill broadcast addresses
+                    identity.each_then(
+                        neo::Tx { multicast: None }.then(udp::Tx::new(socket, Default::default())),
+                    ),
                     RxP256::new(Some(
                         SecretKey::from_slice(&[b"seq", &[0; 29][..]].concat())
                             .unwrap()

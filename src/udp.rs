@@ -133,14 +133,9 @@ pub struct Tx {
 }
 
 impl Tx {
-    pub fn new(socket: Arc<UdpSocket>) -> Self {
-        Self {
-            socket,
-            broadcast: Default::default(),
-        }
+    pub fn new(socket: Arc<UdpSocket>, broadcast: Box<[SocketAddr]>) -> Self {
+        Self { socket, broadcast }
     }
-
-    //
 }
 
 impl Protocol<TxEvent> for Tx {

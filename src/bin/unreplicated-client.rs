@@ -48,21 +48,20 @@ fn main() {
         spawn(move || rx.deploy(&mut udp::NodeRx::<Message>::default().then(message_channel.0)));
 
     let running = Arc::new(AtomicBool::new(false));
-    let node = spawn({
-        let running = running.clone();
-        // no more receiver other than the moved one
-        // just keep one receiver always connected to workaround `_rx` thread
-        #[allow(clippy::redundant_clone)]
-        let event_channel = message_channel.1.clone();
-        move || {
-            Lifecycle::new(event_channel, running).deploy(
-                &mut node
-                    .borrow_mut()
-                    .each_then(udp::NodeTx::default().then(udp::Tx::new(socket))),
-            );
-            node
-        }
-    });
+    let node =
+        spawn({
+            let running = running.clone();
+            // no more receiver other than the moved one
+            // just keep one receiver always connected to workaround `_rx` thread
+            #[allow(clippy::redundant_clone)]
+            let event_channel = message_channel.1.clone();
+            move || {
+                Lifecycle::new(event_channel, running).deploy(&mut node.borrow_mut().each_then(
+                    udp::NodeTx::default().then(udp::Tx::new(socket, Default::default())),
+                ));
+                node
+            }
+        });
 
     sleep(Duration::from_secs(2)); // warm up
     mode.store(WorkloadMode::Benchmark as _, Ordering::SeqCst);

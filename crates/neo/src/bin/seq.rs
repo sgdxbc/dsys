@@ -52,7 +52,7 @@ fn main() {
                         multicast_addr,
                         replica_count: cli.replica_count,
                     })
-                    .deploy(&mut udp::Tx::new(socket));
+                    .deploy(&mut udp::Tx::new(socket, Default::default()));
             });
 
             seq.join().unwrap()
@@ -88,7 +88,7 @@ fn main() {
                             multicast_addr,
                             SecretKey::from_slice(&[b"seq", &[0; 29][..]].concat()).unwrap(),
                         )
-                        .then(udp::Tx::new(socket)),
+                        .then(udp::Tx::new(socket, Default::default())),
                     )
                 });
             }

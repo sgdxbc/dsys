@@ -5,7 +5,7 @@ from subprocess import DEVNULL
 params = {
     'replica': {'interface': 'ens5', '#core': 16},
     'seq': {'interface': 'ens5', '#core': 16},
-    'relay': {'interface': 'ens5', '#core': 8},
+    'relay': {'interface': 'ens5', '#core': 32},
 }
 
 

@@ -38,26 +38,26 @@ async def evaluate(f, client_count, crypto):
 
     with open('addresses.txt') as addresses:
         seq_address = None
-        replica_addresses, client_addresses = [], []
-        relay_count = 0
+        replica_addresses, client_addresses, relay_addresses = [], [], []
         for line in addresses:
             [role, public_address, address] = line.split()
             if role == 'replica' and len(replica_addresses) < replica_count:
-                replica_addresses.append((public_address, None))
+                replica_addresses.append((public_address, address))
             if role == 'client' and len(client_addresses) < client_count:
                 client_addresses.append((public_address, None))
             if role == 'seq':
                 seq_address = seq_address or (public_address, address)
             if role == 'relay':
-                relay_count += 1
+                relay_addresses.append((public_address, None))
     assert seq_address is not None
     assert len(replica_addresses) == replica_count
     assert len(client_addresses) == client_count
+    assert relay_addresses != []
 
     print('clean up', file=stderr)
     await gather(*[
         remote_sync(address[0], ['pkill', 'neo'])
-        for address in client_addresses + replica_addresses + [seq_address]])
+        for address in client_addresses + replica_addresses + [seq_address] + relay_addresses])
 
     print('launch sequencer', file=stderr)
     await remote_sync(
@@ -70,16 +70,19 @@ async def evaluate(f, client_count, crypto):
                 '--replica-count', str(3 * f + 1),
                 '--crypto', crypto])
 
-    relay_i = 1
-    def assign_multicast():
-        nonlocal relay_i
-        if relay_count == 0:
-            return '239.255.1.1'
-        group = f'239.255.2.{relay_i}'
-        if relay_i == relay_count:
-            relay_i = 0
-        relay_i += 1
-        return group
+    print('launch relays', file=stderr)
+    relay_count = len(relay_addresses)
+    async def launch(i, address):
+        send_addresses = [
+            address[1] for address in
+                replica_addresses[replica_count * i // relay_count : replica_count * (i + 1) // relay_count]]
+        await remote_sync(
+            address, [
+                'tmux', 'new-session', '-d', '-s', 'neo', './neo-relay', *send_addresses])
+    await gather(*[launch(i, address[0]) for i, address in enumerate(relay_addresses)])
+
+    print('pending multicast group ready', file=stderr)
+    await sleep(10)
 
     print('launch replicas', file=stderr)
     await gather(*[remote_sync(
@@ -87,14 +90,12 @@ async def evaluate(f, client_count, crypto):
             'tmux', 'new-session', '-d', '-s', 'neo', 
             './neo-replica', 
                 '--id', str(i), 
-                '--multicast', assign_multicast(), 
+                '--multicast', '239.255.1.1',  # not used, just placeholder 
                 '-f', str(f), 
                 # '--tx-count', '5',
                 '--crypto', crypto])
         for i, replica_address in enumerate(replica_addresses)])
-
-    print('pending multicast group ready', file=stderr)
-    await sleep(8)
+    await sleep(1)
 
     print('launch clients', file=stderr)
     clients = [
@@ -112,11 +113,11 @@ async def evaluate(f, client_count, crypto):
     print()
 
     # capture output before interrupt?
-    print('interrupt sequencer and replicas', file=stderr)
+    print('interrupt sequencer, relays and replicas', file=stderr)
     await gather(*[
         remote_sync(address[0], ['tmux', 'send-key', '-t', 'neo', 'C-c'])
-        for address in replica_addresses + [seq_address]])
-    
+        for address in replica_addresses + [seq_address] + relay_addresses])
+
     count = 0
     output_lantecy = True
     for client in clients:
@@ -144,7 +145,7 @@ if __name__ == '__main__':
     from sys import argv
     from asyncio import run
     if argv[1:2] == ['test']:
-        run(evaluate(5, 100, argv[2]))
+        run(evaluate(2, 100, argv[2]))
     else:
         client_count = 80
         for replica_count in [1, 4, 7, 10, 13, 16]:
