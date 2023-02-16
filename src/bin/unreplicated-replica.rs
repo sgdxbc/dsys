@@ -26,7 +26,7 @@ fn main() {
     let mut rx = udp::Rx(socket.clone());
     let rx = spawn(move || {
         set_affinity(0);
-        rx.deploy(&mut udp::NodeRx::<Message>::default().then(message_channel.0))
+        rx.deploy(&mut udp::Deserialize::<Message>::default().then(message_channel.0))
     });
 
     let effect_channel = channel::unbounded();
@@ -45,7 +45,7 @@ fn main() {
             set_affinity(i);
             effect_channel.deploy(
                 &mut identity
-                    .then(udp::NodeTx::default().then(udp::Tx::new(socket, Default::default()))),
+                    .then(udp::Serialize::default().then(udp::Tx::new(socket, Default::default()))),
             )
         });
     }

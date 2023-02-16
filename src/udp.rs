@@ -21,7 +21,7 @@ use nix::{
         pthread_sigmask, sigaction, SaFlags, SigAction, SigHandler, SigSet, SigmaskHow, Signal,
     },
 };
-use serde::{de::DeserializeOwned, Serialize};
+use serde::de::DeserializeOwned;
 
 use crate::{protocol::Generate, NodeAddr, NodeEffect, Protocol};
 
@@ -155,20 +155,18 @@ impl Protocol<TxEvent> for Tx {
     }
 }
 
-// `NodeRx` and `NodeTx` that usually equipped with `Rx` and `Tx`
-// certain protocol operates on raw UDP bytes, so the (de)serialization is extracted out
-// they are not generic (de)serialization infrastration because they interact with `Rx/TxEvent`
+// these are not generic (de)serialization infrastration because they interact with `Rx/TxEvent`
 // if find a good way to generalize against those, they can be moved to `crate::node`
 
-pub struct NodeRx<M>(PhantomData<M>);
+pub struct Deserialize<M>(PhantomData<M>);
 
-impl<M> Default for NodeRx<M> {
+impl<M> Default for Deserialize<M> {
     fn default() -> Self {
         Self(Default::default())
     }
 }
 
-impl<M> Protocol<RxEvent<'_>> for NodeRx<M>
+impl<M> Protocol<RxEvent<'_>> for Deserialize<M>
 where
     M: DeserializeOwned,
 {
@@ -183,17 +181,17 @@ where
     }
 }
 
-pub struct NodeTx<M>(PhantomData<M>);
+pub struct Serialize<M>(PhantomData<M>);
 
-impl<M> Default for NodeTx<M> {
+impl<M> Default for Serialize<M> {
     fn default() -> Self {
         Self(Default::default())
     }
 }
 
-impl<M> Protocol<NodeEffect<M>> for NodeTx<M>
+impl<M> Protocol<NodeEffect<M>> for Serialize<M>
 where
-    M: Serialize,
+    M: serde::Serialize,
 {
     type Effect = TxEvent;
 
