@@ -1,15 +1,10 @@
 use std::{
     borrow::Cow,
-    ffi::c_int,
     marker::PhantomData,
     net::{SocketAddr, ToSocketAddrs, UdpSocket},
     os::fd::AsRawFd,
     panic::panic_any,
-    process::abort,
-    sync::{
-        atomic::{AtomicU32, Ordering},
-        Arc,
-    },
+    sync::Arc,
 };
 
 use bincode::Options;
@@ -17,9 +12,7 @@ use bincode::Options;
 use nix::{
     errno::Errno,
     poll::{ppoll, PollFd, PollFlags},
-    sys::signal::{
-        pthread_sigmask, sigaction, SaFlags, SigAction, SigHandler, SigSet, SigmaskHow, Signal,
-    },
+    sys::signal::SigSet,
 };
 use serde::de::DeserializeOwned;
 
@@ -78,9 +71,9 @@ impl Generate for Rx {
         P: for<'a> Protocol<Self::Event<'a>>,
     {
         let mut buf = [0; 1500];
-        let poll_fd = PollFd::new(self.0.as_raw_fd(), PollFlags::POLLIN);
-        while COUNT.load(Ordering::SeqCst) == 0 {
-            match ppoll(&mut [poll_fd], None, Some(SigSet::empty())) {
+        let poll_fds = &mut [PollFd::new(self.0.as_raw_fd(), PollFlags::POLLIN)];
+        loop {
+            match ppoll(poll_fds, None, Some(SigSet::empty())) {
                 Err(Errno::EINTR) => break,
                 Err(err) => panic_any(err),
                 Ok(_) => {
@@ -91,35 +84,6 @@ impl Generate for Rx {
             }
         }
     }
-}
-
-static COUNT: AtomicU32 = AtomicU32::new(0);
-
-pub fn capture_interrupt() {
-    extern "C" fn handle(_: c_int) {
-        if COUNT.fetch_add(1, Ordering::SeqCst) == 0 {
-            eprintln!("first interruption captured")
-        } else {
-            abort()
-        }
-    }
-    unsafe {
-        sigaction(
-            Signal::SIGINT,
-            &SigAction::new(
-                SigHandler::Handler(handle),
-                SaFlags::empty(),
-                SigSet::empty(),
-            ),
-        )
-    }
-    .unwrap();
-    pthread_sigmask(
-        SigmaskHow::SIG_BLOCK,
-        Some(&SigSet::from_iter([Signal::SIGINT].into_iter())),
-        None,
-    )
-    .unwrap();
 }
 
 pub enum TxEvent {

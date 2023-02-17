@@ -21,7 +21,7 @@ use dsys::{
 };
 use rand::random;
 
-fn main() {
+pub fn main() {
     let replica_ip = args().nth(1).unwrap_or(String::from("localhost"));
     let socket = Arc::new(udp::client_socket((&*replica_ip, 5000)));
     udp::init_socket(&socket);
@@ -44,24 +44,24 @@ fn main() {
 
     let message_channel = channel::unbounded();
     let mut rx = udp::Rx(socket.clone());
-    let _rx =
-        spawn(move || rx.deploy(&mut udp::Deserialize::<Message>::default().then(message_channel.0)));
+    let _rx = spawn(move || {
+        rx.deploy(&mut udp::Deserialize::<Message>::default().then(message_channel.0))
+    });
 
     let running = Arc::new(AtomicBool::new(false));
-    let node =
-        spawn({
-            let running = running.clone();
-            // no more receiver other than the moved one
-            // just keep one receiver always connected to workaround `_rx` thread
-            #[allow(clippy::redundant_clone)]
-            let event_channel = message_channel.1.clone();
-            move || {
-                Lifecycle::new(event_channel, running).deploy(&mut node.borrow_mut().each_then(
-                    udp::Serialize::default().then(udp::Tx::new(socket, Default::default())),
-                ));
-                node
-            }
-        });
+    let node = spawn({
+        let running = running.clone();
+        // no more receiver other than the moved one
+        // just keep one receiver always connected to workaround `_rx` thread
+        #[allow(clippy::redundant_clone)]
+        let event_channel = message_channel.1.clone();
+        move || {
+            Lifecycle::new(event_channel, running).deploy(&mut node.borrow_mut().each_then(
+                udp::Serialize::default().then(udp::Tx::new(socket, Default::default())),
+            ));
+            node
+        }
+    });
 
     sleep(Duration::from_secs(2)); // warm up
     mode.store(WorkloadMode::Benchmark as _, Ordering::SeqCst);

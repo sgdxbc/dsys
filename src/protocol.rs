@@ -179,12 +179,12 @@ impl<E> Generate for channel::Receiver<E> {
 }
 
 pub trait ReactiveGenerate<E> {
-    type Event; // add a lifetime parameter here when figure out how to do it
+    type Event<'a>;
 
-    fn update<P>(&mut self, event: E, protocol: &mut P)
+    fn update<P, Effect>(&mut self, event: E, protocol: &mut P) -> Effect
     where
-        // want to allow all `P` with `P::Effect: Composite` but cannot compile
-        P: Protocol<Self::Event, Effect = ()>;
+        P: for<'a> Protocol<Self::Event<'a>, Effect = Effect>,
+        Effect: Composite;
 }
 
 impl<Q, E> ReactiveGenerate<E> for Q
@@ -192,16 +192,19 @@ where
     Q: Protocol<E>,
     Q::Effect: Composite,
 {
-    type Event = <Q::Effect as Composite>::Atom;
+    type Event<'a> = <Q::Effect as Composite>::Atom;
 
-    fn update<P>(&mut self, event: E, protocol: &mut P)
+    fn update<P, Effect>(&mut self, event: E, protocol: &mut P) -> Effect
     where
-        P: Protocol<Self::Event>,
+        P: for<'a> Protocol<Self::Event<'a>, Effect = Effect>,
+        Effect: Composite,
     {
         let mut events = self.update(event);
+        let mut effects = P::Effect::NOP;
         while let Some(event) = events.decompose() {
-            protocol.update(event);
+            effects = effects.compose(protocol.update(event));
         }
+        effects
     }
 }
 
@@ -256,13 +259,12 @@ where
 
 pub struct GenerateThen<A, B>(A, B);
 
-impl<A, B> Generate for GenerateThen<A, B>
+impl<A, B, EventB> Generate for GenerateThen<A, B>
 where
     A: Generate,
-    B: for<'a> ReactiveGenerate<A::Event<'a>>,
+    B: for<'a, 'b> ReactiveGenerate<A::Event<'a>, Event<'b> = EventB>,
 {
-    // is this lifetime correct?
-    type Event<'a> = <B as ReactiveGenerate<A::Event<'a>>>::Event;
+    type Event<'a> = EventB;
 
     fn deploy<P>(&mut self, protocol: &mut P)
     where
