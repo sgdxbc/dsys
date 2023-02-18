@@ -4,6 +4,8 @@ import runpy
 import concurrent.futures
 import pathlib
 import boto3
+import botocore.config
+import tqdm
 
 
 def main():
@@ -15,7 +17,10 @@ def main():
     config.update(runpy.run_path('run_ec2_config.py'))
 
     boto3.setup_default_session(profile_name=config['profile'])
-    ec2 = boto3.resource('ec2', region_name=config['region'])
+    ec2 = boto3.resource(
+        'ec2', 
+        region_name=config['region'], 
+        config=botocore.config.Config(retries={'max_attempts': 1024, 'mode': 'adaptive'}))
 
     if sys.argv[1:2] == ['launch']:
         assert not pathlib.Path('run_addr.txt').exists()
@@ -26,7 +31,6 @@ def main():
         except:
             terminate(ec2)
             raise
-        print('requested')
 
         addresses = ''
         for role, instance in instances:
@@ -48,32 +52,40 @@ def main():
 
 
 def launch(preset, args, ec2, config):
+    plans = []
+    for arg in args:
+        [role, count] = arg.split('=')
+        plans += [(role, i) for i in range(int(count))]
     instances = []
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        for arg in args:
-            [role, count] = arg.split('=')
-            for i in range(int(count)):
-                instance = executor.submit(ec2.create_instances,
-                    **preset[role](i, config),
+    # a little bit faster than purely single threaded (about 2x)
+    # this is limited by AWS's bucket refill rate (2 requests/second), so no more improvement
+    # if still cannot find a way to launch multiple instances in one request
+    # leverage boto3's client-side throttle (adaptive retry mode)
+    with concurrent.futures.ThreadPoolExecutor() as executor, tqdm.tqdm(total=len(plans)) as pbar:
+        for role, i in plans:
+            def task(role, i):
+                instance = ec2.create_instances(
+                    **preset[f'launch_{role}'](i, config),
                     MinCount=1, MaxCount=1, 
                     TagSpecifications=[{
                         'ResourceType': 'instance', 
                         'Tags': [{'Key': 'dsys-role', 'Value': role}]}],
-                )
-                instances.append((role, instance))
-                # addresses += f'{role:12}{instance.private_ip_address}\n'
-        return [(role, instance.result()[0]) for role, instance in instances]
+                )[0]
+                pbar.update()
+                return instance
+            instances.append((role, executor.submit(task, role, i)))
+            # addresses += f'{role:12}{instance.private_ip_address}\n'
+        return [(role, instance.result()) for role, instance in instances]
 
 
 def terminate(ec2):
-    instances = list(ec2.instances.filter(Filters=[
+    instances = ec2.instances.filter(Filters=[
         {'Name': 'instance-state-name', 'Values': ['pending', 'running']},  # other states?
-        {'Name': 'tag:dsys-role', 'Values': ['*']}]))
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        for instance in instances:
-            executor.submit(instance.terminate)
-
-    for instance in instances:
+        {'Name': 'tag:dsys-role', 'Values': ['*']}])
+    instances_list = list(instances)
+    instances.terminate()
+    print('termination requested')
+    for instance in instances_list:
         instance.wait_until_terminated()
         print('.', end='', flush=True)
     print()

@@ -64,7 +64,7 @@ async def evaluate(client_count):
             count = None
             print(err.decode())
         if count is None:
-            continue
+            break
         [client_count, latency] = out.decode().splitlines()
         count += int(client_count)
         if output_lantecy:
