@@ -21,7 +21,7 @@ async def setup_remote(address, param):
         f"for i in $(seq {param['#core'] // 2} {param['#core'] - 1}); do "
             "echo 0 | sudo tee /sys/devices/system/cpu/cpu$i/online; done && "
         f"sudo ethtool -L {param['interface']} combined 1 && "
-        f"sudo ethtool -G {param['interface']} rx 16384 && "  #
+        # f"sudo ethtool -G {param['interface']} rx 16384 && "  #
         "sudo service irqbalance stop && "
         f"IRQBALANCE_BANNED_CPULIST=0-{param['#core'] // 2 - 2} sudo -E irqbalance --oneshot && "
         # for working with AWS VPC's multicast
@@ -35,7 +35,7 @@ if __name__ == '__main__':
     roles = argv[1:]
     assert all(role in params for role in roles)
     tasks = []
-    with open('addresses.txt') as addresses:
+    with open('run_addr.txt') as addresses:
         for line in addresses:
             [role, address, _] = line.split()
             if role in roles:

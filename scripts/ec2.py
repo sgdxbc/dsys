@@ -35,7 +35,7 @@ def main():
             addresses += f'{role:12}{instance.public_ip_address:20}{instance.private_ip_address}\n'
             print('.', end='', flush=True)
         print()
-        with open('addresses.txt', 'w') as addresses_file:
+        with open('run_addr.txt', 'w') as addresses_file:
             addresses_file.write(addresses)
         exit()
 

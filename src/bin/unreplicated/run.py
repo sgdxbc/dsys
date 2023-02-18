@@ -3,17 +3,18 @@ from asyncio import create_subprocess_exec, gather, sleep
 from subprocess import PIPE
 from sys import stderr
 
-async def remote(address, args, stdout=None, stderr=None):
+async def remote(address, command, stdout=None, stderr=None):
     return await create_subprocess_exec(
-        'ssh', '-q', address, *args, stdout=stdout, stderr=stderr)
+        'ssh', '-q', address, command, stdout=stdout, stderr=stderr)
 
-async def remote_sync(address, args):
-    p = await remote(address, args)
+async def remote_sync(address, command, check_return=0):
+    p = await remote(address, command)
     await p.wait()
-    return p.returncode
+    if check_return is not None:
+        assert p.returncode == check_return
 
 async def evaluate(client_count):
-    with open('addresses.txt') as addresses:
+    with open('run_addr.txt') as addresses:
         replica_address = None
         client_addresses = []
         for line in addresses:
@@ -26,22 +27,22 @@ async def evaluate(client_count):
     assert len(client_addresses) == client_count
 
     print('clean up', file=stderr)
-    await remote_sync(replica_address[0], ['pkill', 'unreplicated'])
+    await remote_sync(replica_address[0], 'pkill unreplicated', check_return=None)
     await gather(*[
-        remote_sync(client_address, ['pkill', 'unreplicated'])
+        remote_sync(client_address, 'pkill unreplicated', check_return=None)
         for client_address in client_addresses])
 
     print('launch replica', file=stderr)
     await remote_sync(
         replica_address[0], 
-        ['tmux', 'new-session', '-d', '-s', 'unreplicated', './unreplicated-replica'])
+        'tmux new-session -d -s unreplicated "./unreplicated replica || read _"')
     await sleep(1)
 
     print('launch clients', file=stderr)
     clients = [
         await remote(
             client_address, 
-            ['./unreplicated-client', replica_address[1]], 
+            f'./unreplicated client {replica_address[1]}', 
             stdout=PIPE, stderr=PIPE)
         for client_address in client_addresses]
 
@@ -53,7 +54,7 @@ async def evaluate(client_count):
 
     # capture output before interrupt?
     print('interrupt replica', file=stderr)
-    await remote_sync(replica_address[0], ['tmux', 'send-key', '-t', 'unreplicated', 'C-c'])
+    await remote_sync(replica_address[0], 'tmux send-key -t unreplicated C-c')
 
     count = 0
     output_lantecy = True
@@ -73,16 +74,17 @@ async def evaluate(client_count):
         print(count / 10)
 
     print('clean up', file=stderr)
-    await remote_sync(replica_address[0], ['pkill', 'unreplicated'])
+    await remote_sync(replica_address[0], 'pkill unreplicated', check_return=None)
     await gather(*[
-        remote_sync(client_address, ['pkill', 'unreplicated'])
+        remote_sync(client_address, 'pkill unreplicated', check_return=None)
         for client_address in client_addresses])
 
 if __name__ == '__main__':
     from sys import argv
     from asyncio import run
     if argv[1:2] == ['test']:
-        run(evaluate(200))
+        count = int((argv[2:3] + ["1"])[0])
+        run(evaluate(count))
     else:
         for client_count in [1, 2, 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]:
             print(client_count)

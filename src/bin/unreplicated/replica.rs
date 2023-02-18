@@ -38,7 +38,6 @@ pub fn main() {
 
     // save the last parallelism for IRQ handling
     for i in 2..available_parallelism().unwrap().get() - 1 {
-        // for i in 2..8 - 1 {
         let mut effect_channel = effect_channel.1.clone();
         let socket = socket.clone();
         let _tx = spawn(move || {
