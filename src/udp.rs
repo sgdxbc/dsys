@@ -70,7 +70,7 @@ impl Generate for Rx {
     where
         P: for<'a> Protocol<Self::Event<'a>>,
     {
-        let mut buf = [0; 1500];
+        let mut buf = [0; 65507];
         let poll_fds = &mut [PollFd::new(self.0.as_raw_fd(), PollFlags::POLLIN)];
         loop {
             match ppoll(poll_fds, None, Some(SigSet::empty())) {
