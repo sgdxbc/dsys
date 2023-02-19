@@ -39,7 +39,9 @@ async def evaluate_internal(replica_instance, client_instances):
 
     print("launch clients", file=sys.stderr)
     clients = [
-        await instance.start(f"./unreplicated client {replica_instance.ip}", out=PIPE)
+        await instance.start(
+            f"./unreplicated client {replica_instance.ip}", stdout=PIPE, stderr=PIPE
+        )
         for instance in client_instances
     ]
 

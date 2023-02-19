@@ -18,9 +18,15 @@ use dsys::{
     unreplicated::{Client, Message},
     NodeAddr, Protocol,
 };
+use nix::{
+    sys::signal::{kill, Signal},
+    unistd::Pid,
+};
 use rand::random;
 
 pub fn main(replica_ip: IpAddr) {
+    dsys::capture_interrupt();
+
     let socket = Arc::new(udp::client_socket((replica_ip, 5000)));
     udp::init_socket(&socket);
     let mode = Arc::new(AtomicU8::new(WorkloadMode::Discard as _));
@@ -67,7 +73,9 @@ pub fn main(replica_ip: IpAddr) {
     mode.store(WorkloadMode::Discard as _, Ordering::SeqCst);
     sleep(Duration::from_secs(2)); // cool down
 
+    kill(Pid::from_raw(0), Signal::SIGINT).unwrap();
     running.store(false, Ordering::SeqCst);
+
     let mut latencies = node.join().unwrap().latencies;
     println!("{}", latencies.len() as f32 / 10.);
     if latencies.is_empty() {

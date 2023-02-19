@@ -13,6 +13,34 @@ client_type = "t3.micro"
 replica_type = "m5.4xlarge"
 
 
+def launch_action(ec2, client_count, params):
+    print(f"launch {client_count} client(s)")
+    client_instances = launch(ec2, client_type, client_count, params)
+    print("launch one replica")
+    replica_instances = launch(ec2, replica_type, 1, params)
+
+    instances = []
+    print("wait for replica running")
+    for instance in replica_instances:
+        instances.append(wait_running(instance, "replica"))
+
+    async def task():
+        print("set up replica")
+        await asyncio.sleep(3)
+        for instance in instances:
+            await wait_process(instance.setup(to_spec(replica_type)))
+
+    asyncio.run(task())
+
+    print("wait for clients running")
+    for instance in client_instances:
+        instances.append(wait_running(instance, "client"))
+        print(".", end="", flush=True)
+    print()
+
+    return instances
+
+
 def main():
     params = runpy.run_path("run-ec2params.py")
     if "profile" in params:
@@ -24,29 +52,12 @@ def main():
         client_count = 1
         client_count = int(args(2, "1"))
         assert not out.exists()
-
-        print(f"launch {client_count} client(s)")
-        client_instances = launch(ec2, client_type, client_count, params)
-        print("launch one replica")
-        replica_instances = launch(ec2, replica_type, 1, params)
-
-        instances = []
-        print("wait for replica running")
-        for instance in replica_instances:
-            instances.append(wait_running(instance, "replica"))
-
-        async def task():
-            print("set up replica")
-            for instance in instances:
-                await wait_process(instance.setup(to_spec(replica_type)))
-
-        asyncio.run(task())
-
-        print("wait for clients running")
-        for instance in client_instances:
-            instances.append(wait_running(instance, "client"))
-            print(".", end="", flush=True)
-        print()
+        try:
+            instances = launch_action(ec2, client_count, params)
+        except:
+            print('terminate on exception')
+            terminate(ec2)
+            raise
 
         out.write_text("\n".join(instance.store() for instance in instances))
         exit()

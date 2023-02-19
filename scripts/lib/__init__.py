@@ -22,8 +22,8 @@ class Instance:
     def rsync(self, path):
         return rsync(self.control_host, path)
 
-    def start(self, command, out=None):
-        return remote_start(self.control_host, command, out=out)
+    def start(self, command, stdout=None, stderr=None):
+        return remote_start(self.control_host, command, stdout=stdout, stderr=stderr)
 
     def pkill(self, name):
         return pkill(self.control_host, name)
@@ -63,8 +63,10 @@ def rsync(address, path):
     return local_start(f"rsync --rsh='ssh -q' --update --times {path} {address}:")
 
 
-def remote_start(address, command, out=None):
-    return create_subprocess_exec("ssh", "-q", address, command, stdout=out, stderr=out)
+def remote_start(address, command, stdout=None, stderr=None):
+    return create_subprocess_exec(
+        "ssh", "-q", address, command, stdout=stdout, stderr=stderr
+    )
 
 
 def pkill(address, name):
@@ -103,5 +105,5 @@ def setup(address, spec):
         f"IRQBALANCE_BANNED_CPULIST=0-{spec.core_count // 2 - 2} sudo -E irqbalance --oneshot && "
         # IGMPv2 required by AWS VPC's multicast
         f"sudo sysctl net.ipv4.conf.{spec.interface}.force_igmp_version=2",
-        out=DEVNULL,
+        stdout=DEVNULL,
     )

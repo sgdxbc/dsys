@@ -16,7 +16,7 @@ use nix::{
 };
 use serde::de::DeserializeOwned;
 
-use crate::{protocol::Generate, NodeAddr, NodeEffect, Protocol};
+use crate::{protocol::Generate, NodeAddr, NodeEffect, NodeEvent, Protocol};
 
 // really seek for a better way
 pub fn client_socket(remote: impl ToSocketAddrs) -> UdpSocket {
@@ -134,14 +134,16 @@ impl<M> Protocol<RxEvent<'_>> for Deserialize<M>
 where
     M: DeserializeOwned,
 {
-    type Effect = M;
+    type Effect = NodeEvent<M>;
 
     fn update(&mut self, event: RxEvent) -> Self::Effect {
         let RxEvent::Receive(buf) = event;
-        bincode::options()
-            .allow_trailing_bytes()
-            .deserialize(&buf)
-            .unwrap()
+        NodeEvent::Handle(
+            bincode::options()
+                .allow_trailing_bytes()
+                .deserialize(&buf)
+                .unwrap(),
+        )
     }
 }
 

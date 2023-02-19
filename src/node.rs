@@ -46,12 +46,12 @@ pub enum ClientEffect<M> {
 }
 
 pub struct Lifecycle<M> {
-    message_channel: channel::Receiver<M>,
+    message_channel: channel::Receiver<NodeEvent<M>>,
     running: Arc<AtomicBool>,
 }
 
 impl<M> Lifecycle<M> {
-    pub fn new(message_channel: channel::Receiver<M>, running: Arc<AtomicBool>) -> Self {
+    pub fn new(message_channel: channel::Receiver<NodeEvent<M>>, running: Arc<AtomicBool>) -> Self {
         Self {
             message_channel,
             running,
@@ -77,8 +77,8 @@ impl<M> Generate for Lifecycle<M> {
                 node.update(NodeEvent::Tick);
             }
             match self.message_channel.recv_deadline(deadline) {
-                Ok(message) => {
-                    node.update(NodeEvent::Handle(message));
+                Ok(event) => {
+                    node.update(event);
                 }
                 Err(channel::RecvTimeoutError::Disconnected) => break,
                 Err(channel::RecvTimeoutError::Timeout) => {
