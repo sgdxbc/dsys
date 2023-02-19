@@ -69,7 +69,7 @@ pub fn main(replica_ip: IpAddr) {
 
     running.store(false, Ordering::SeqCst);
     let mut latencies = node.join().unwrap().latencies;
-    println!("{}", latencies.len());
+    println!("{}", latencies.len() as f32 / 10.);
     if latencies.is_empty() {
         exit(1)
     } else {
