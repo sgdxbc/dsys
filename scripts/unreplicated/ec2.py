@@ -7,10 +7,10 @@ import boto3
 
 sys.path.append("scripts")
 from lib import args, wait_process
-from lib.ec2 import launch, wait_running, terminate, to_spec
+from lib.ec2 import launch, wait_running, terminate, specs
 
 client_type = "t3.micro"
-replica_type = "m5.4xlarge"
+replica_type = "c5.12xlarge"
 
 
 def launch_action(ec2, client_count, params):
@@ -28,7 +28,7 @@ def launch_action(ec2, client_count, params):
         print("set up replica")
         await asyncio.sleep(3)
         for instance in instances:
-            await wait_process(instance.setup(to_spec(replica_type)))
+            await wait_process(instance.setup(specs[replica_type]))
 
     asyncio.run(task())
 
@@ -55,7 +55,7 @@ def main():
         try:
             instances = launch_action(ec2, client_count, params)
         except:
-            print('terminate on exception')
+            print("terminate on exception")
             terminate(ec2)
             raise
 

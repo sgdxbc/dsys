@@ -76,7 +76,8 @@ pub fn main(replica_ip: IpAddr) {
     kill(Pid::from_raw(0), Signal::SIGINT).unwrap();
     running.store(false, Ordering::SeqCst);
 
-    let mut latencies = node.join().unwrap().latencies;
+    let workload = node.join().unwrap();
+    let mut latencies = workload.latencies;
     println!("{}", latencies.len() as f32 / 10.);
     if latencies.is_empty() {
         exit(1)
@@ -87,5 +88,8 @@ pub fn main(replica_ip: IpAddr) {
             latencies[latencies.len() / 2],
             latencies[latencies.len() * 99 / 100]
         )
+    }
+    if !workload.node.resend_stats.is_empty() {
+        println!("resend {:?}", workload.node.resend_stats);
     }
 }

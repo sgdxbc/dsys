@@ -91,18 +91,19 @@ class Spec:
         self.tx_ring = tx_ring
 
 
-def setup(address, spec):
+def setup(address, spec, enable_core_count=8):
+    assert enable_core_count <= spec.core_count
     return remote_start(
         address,
         # interface queue count, rx/tx ring buffer size
         f"sudo ethtool -L {spec.interface} combined 1 && "
         f"sudo ethtool -G {spec.interface} rx {spec.rx_ring} tx {spec.tx_ring} && "
         # disable hyperthreading
-        f"for i in $(seq {spec.core_count // 2} {spec.core_count - 1}); do "
+        f"for i in $(seq {enable_core_count} {spec.core_count - 1}); do "
         "echo 0 | sudo tee /sys/devices/system/cpu/cpu$i/online; done && "
         # bind IRQ to the last core
         "sudo service irqbalance stop && "
-        f"IRQBALANCE_BANNED_CPULIST=0-{spec.core_count // 2 - 2} sudo -E irqbalance --oneshot && "
+        f"IRQBALANCE_BANNED_CPULIST=0-{enable_core_count - 2} sudo -E irqbalance --oneshot && "
         # IGMPv2 required by AWS VPC's multicast
         f"sudo sysctl net.ipv4.conf.{spec.interface}.force_igmp_version=2",
         stdout=DEVNULL,

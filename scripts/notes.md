@@ -22,7 +22,7 @@ instances.
 Part of the scripts are EC2-dedicated like launching and terminating instances,
 while the other scripts are generally appliable like setting up servers and 
 uploading binaries. 
-The EC2 scripts are kept in several `ec2` subdirectories.
+The EC2 scripts are kept in `ec2.py` files distributed among three parts.
 
 
 `run-instances.txt`
@@ -46,14 +46,25 @@ There's no port in the private IP because some protocols use multiple ports.
 EC2 notes
 
 Current scripts launch EC2 instances with random (i.e., DHCP-assigned) private
-IPs. This is a trade-off for launching performance. If specifying private IP
-during launching, only one instance can be launched per request, and AWS
-effectively capped request rate to 2/second. All protocols I can think about
-do not require special IP patterns (i.e. it is possible to pass all IPs a node
-cares about to the node through e.g. command line).
+IPs. 
+This is a trade-off for launching performance. 
+If specifying private IP during launching, only one instance can be launched per
+request, and AWS effectively capped request rate to 2/second. 
+All protocols I can think about do not require special IP patterns (i.e. it is 
+possible to pass all IPs a node cares about to the node through e.g. command 
+line).
 
-The scripts make heavy use of SSH. To work around various login issues caused by
-launching and terminating instances, add this to SSH configuration
+According to AWS document launching/terminating instances seems to have similar
+latency and rate limitation compare to starting/stopping instances. 
+So the scripts implement management for one-shot instances to reduce 
+complexity. 
+For example, the `setup` method assumes freshly launched instances and there's 
+no method to revert the setup.
+Although currently all setup can be reverted by a reboot.
+
+The scripts make heavy use of SSH. 
+To work around various login issues caused by launching and terminating 
+instances, add this to SSH configuration
 
 ```
 Host * !github.com

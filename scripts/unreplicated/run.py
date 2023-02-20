@@ -63,11 +63,15 @@ async def evaluate_internal(replica_instance, client_instances):
             print(err.decode())
         if count is None:
             break
-        [client_count, latency] = out.decode().splitlines()
+
+        [client_count, latency, *stats] = out.decode().splitlines()
         count += float(client_count)
+
         if output_lantecy:
             print(latency)
             output_lantecy = False
+        if stats:
+            print('\n'.join(stats))
     if count is not None:
         print(count)
 

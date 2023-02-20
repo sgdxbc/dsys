@@ -1,11 +1,11 @@
 from lib import Instance, Spec
 
 
-def to_spec(instance_type):
-    if instance_type == "m5.4xlarge":
-        return Spec(16, "ens5", 1 << 14, 1 << 10)
-
-    raise ValueError(instance_type)
+specs = {
+    "m5.4xlarge": Spec(16, "ens5", 1 << 14, 1 << 10),
+    "c5.4xlarge": Spec(16, "ens5", 1 << 14, 1 << 10),
+    "c5.12xlarge": Spec(48, "ens5", 1 << 14, 1 << 10),
+}
 
 
 def launch(ec2, instance_type, count, params):
@@ -30,13 +30,13 @@ def wait_running(instance, role):
 
 def terminate(ec2):
     instances = ec2.instances.filter(Filters=[{"Name": "tag:dsys", "Values": ["*"]}])
-    instances_list = list(instances)
-    instances.terminate()
+    instances_list = list(
+        instance for instance in instances if instance.state["Name"] != "terminated"
+    )
+    instances.page_size(300).terminate()
     print("termination requested")
 
     for instance in instances_list:
-        if instance.state["Name"] == "terminated":
-            continue
         instance.wait_until_terminated()
         print(".", end="", flush=True)
     print()

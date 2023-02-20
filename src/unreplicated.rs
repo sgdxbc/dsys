@@ -35,6 +35,7 @@ pub struct Client {
     seq: u32,
     op: Option<Box<[u8]>>,
     ticked: u32,
+    pub resend_stats: HashMap<u32, u32>,
 }
 
 impl Client {
@@ -47,6 +48,7 @@ impl Client {
             seq: 0,
             op: None,
             ticked: 0,
+            resend_stats: Default::default(),
         }
     }
 }
@@ -77,13 +79,17 @@ impl Protocol<ClientEvent<Message>> for Client {
                 let Some(op) = &self.op else {
                     return None;
                 };
+
                 self.ticked += 1;
                 if self.ticked == 1 || !self.ticked.is_power_of_two() {
                     return None;
                 }
+
                 if self.ticked == 2 {
                     eprintln!("resend");
                 }
+                *self.resend_stats.entry(self.ticked).or_default() += 1;
+
                 let request = Request {
                     client_id: self.id,
                     client_addr: self.addr,

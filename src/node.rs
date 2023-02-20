@@ -91,7 +91,7 @@ impl<M> Generate for Lifecycle<M> {
 }
 
 pub struct Workload<N, I> {
-    node: N,
+    pub node: N,
     ops: I,
     pub results: Vec<Box<[u8]>>,
     instant: Instant,
