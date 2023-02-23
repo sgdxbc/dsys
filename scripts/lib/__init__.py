@@ -104,6 +104,11 @@ def setup(address, spec, enable_core_count=8):
         # bind IRQ to the last core
         "sudo service irqbalance stop && "
         f"IRQBALANCE_BANNED_CPULIST=0-{enable_core_count - 2} sudo -E irqbalance --oneshot && "
+        # increase socket buffer size
+        f"sudo sysctl net.core.rmem_max=26214400 && "
+        f"sudo sysctl net.core.wmem_max=26214400 && "
+        f"sudo sysctl net.core.rmem_default=26214400 && "
+        f"sudo sysctl net.core.wmem_default=26214400 && "
         # IGMPv2 required by AWS VPC's multicast
         f"sudo sysctl net.ipv4.conf.{spec.interface}.force_igmp_version=2",
         stdout=DEVNULL,

@@ -81,10 +81,7 @@ impl<M> Generate for Lifecycle<M> {
                     node.update(event);
                 }
                 Err(channel::RecvTimeoutError::Disconnected) => break,
-                Err(channel::RecvTimeoutError::Timeout) => {
-                    deadline = Instant::now() + tick_interval;
-                    node.update(NodeEvent::Tick);
-                }
+                Err(channel::RecvTimeoutError::Timeout) => {}
             }
         }
     }

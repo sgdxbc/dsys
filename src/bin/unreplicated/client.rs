@@ -1,7 +1,6 @@
 use std::{
     iter::repeat_with,
     net::{IpAddr, ToSocketAddrs},
-    process::exit,
     sync::{
         atomic::{AtomicBool, AtomicU8, Ordering},
         Arc,
@@ -79,9 +78,7 @@ pub fn main(replica_ip: IpAddr) {
     let workload = node.join().unwrap();
     let mut latencies = workload.latencies;
     println!("{}", latencies.len() as f32 / 10.);
-    if latencies.is_empty() {
-        exit(1)
-    } else {
+    if !latencies.is_empty() {
         latencies.sort_unstable();
         println!(
             "50th {:?} 99th {:?}",

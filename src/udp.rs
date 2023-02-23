@@ -71,9 +71,12 @@ impl Generate for Rx {
         P: for<'a> Protocol<Self::Event<'a>>,
     {
         let mut buf = [0; 65507];
-        let poll_fds = &mut [PollFd::new(self.0.as_raw_fd(), PollFlags::POLLIN)];
         loop {
-            match ppoll(poll_fds, None, Some(SigSet::empty())) {
+            match ppoll(
+                &mut [PollFd::new(self.0.as_raw_fd(), PollFlags::POLLIN)],
+                None,
+                Some(SigSet::empty()),
+            ) {
                 Err(Errno::EINTR) => break,
                 Err(err) => panic_any(err),
                 Ok(_) => {

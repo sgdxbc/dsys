@@ -10,7 +10,7 @@ from lib import args, wait_process
 from lib.ec2 import launch, wait_running, terminate, specs
 
 client_type = "t3.micro"
-replica_type = "c5.12xlarge"
+replica_type = "c5.4xlarge"
 
 
 def launch_action(ec2, client_count, params):

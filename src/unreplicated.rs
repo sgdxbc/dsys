@@ -81,14 +81,15 @@ impl Protocol<ClientEvent<Message>> for Client {
                 };
 
                 self.ticked += 1;
-                if self.ticked == 1 || !self.ticked.is_power_of_two() {
+                assert_ne!(self.ticked, 10);
+                if self.ticked == 1 {
                     return None;
                 }
 
                 if self.ticked == 2 {
                     eprintln!("resend");
                 }
-                *self.resend_stats.entry(self.ticked).or_default() += 1;
+                *self.resend_stats.entry(self.seq).or_default() += 1;
 
                 let request = Request {
                     client_id: self.id,
