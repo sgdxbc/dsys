@@ -2,6 +2,7 @@ from lib import Instance, Spec
 
 
 specs = {
+    "c5.2xlarge": Spec(8, "ens5", 1 << 14, 1 << 10),
     "m5.4xlarge": Spec(16, "ens5", 1 << 14, 1 << 10),
     "c5.4xlarge": Spec(16, "ens5", 1 << 14, 1 << 10),
     "c5.12xlarge": Spec(48, "ens5", 1 << 14, 1 << 10),

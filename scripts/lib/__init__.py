@@ -34,6 +34,9 @@ class Instance:
     def tmux_interrupt(self, session):
         return tmux_interrupt(self.control_host, session)
 
+    def tmux_kill(self, session):
+        return tmux_kill(self.control_host, session)
+
 
 def load_instances():
     instances = []
@@ -81,6 +84,13 @@ def tmux(address, session, command):
 
 def tmux_interrupt(address, session):
     return wait_process(remote_start(address, f"tmux send-key -t {session} C-c"))
+
+
+def tmux_kill(address, session):
+    return wait_process(
+        remote_start(address, f"tmux kill-session -t {session}", stderr=DEVNULL),
+        check_return=None,
+    )
 
 
 class Spec:
